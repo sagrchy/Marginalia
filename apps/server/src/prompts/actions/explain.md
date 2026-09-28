@@ -1,1 +1,1 @@
-Explain the selected passage (or, if none, the key idea on the current page) in the subject's style. Start from what the student likely already knows. Keep it to a few short paragraphs, then ask one check question.
+Explain the selected passage (or, if none, the key idea on the current page) in the subject's style. Start from what the student likely already knows. Stay within what the page or selection actually says; do not anticipate material from later pages. Keep it under about 150 words, then ask exactly one check question.

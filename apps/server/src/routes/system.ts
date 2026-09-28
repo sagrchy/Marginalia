@@ -3,6 +3,8 @@ import { desc, eq, sql } from "drizzle-orm";
 import { books, concepts, questions, sessions, subjects } from "@marginalia/db";
 import { ModelRole, SettingsPatch, printedPage, redactSettings, weekStart } from "@marginalia/shared";
 import { z } from "zod";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ocrmypdfAvailable } from "../ingest/ocr-worker";
 import { LLMError } from "../llm/provider";
 import { usageByRole, usageMeter } from "../llm/usage";
@@ -13,12 +15,17 @@ import { targetsForWeek } from "../services/targets";
 import { body, numQuery, type Deps } from "./util";
 import { bookOut } from "./library";
 
+const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+const mcpCommand = `claude mcp add marginalia -e MARGINALIA_DATA_DIR=<data> -- node ${path.join(repoDir, "scripts", "marginalia.mjs")} mcp`;
+
 export function systemRoutes({ db, router, dataDir }: Deps) {
   const app = new Hono();
 
   app.get("/health", (c) => c.json({ ok: true, provider: getSettings(db).provider, dataDir, ocrmypdf: ocrmypdfAvailable() }));
 
-  app.get("/settings", (c) => c.json({ ...redactSettings(getSettings(db)), dataDir, ocrmypdf: ocrmypdfAvailable() }));
+  app.get("/settings", (c) =>
+    c.json({ ...redactSettings(getSettings(db)), dataDir, ocrmypdf: ocrmypdfAvailable(), mcpCommand: mcpCommand.replace("<data>", dataDir) }),
+  );
 
   app.patch("/settings", async (c) => {
     const patch = await body(c, SettingsPatch);

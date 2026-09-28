@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "src/index.ts",
+  "main": "src/app.ts",
   "scripts": {
     "dev": "MARGINALIA_DATA_DIR=${MARGINALIA_DATA_DIR:-../../data} tsx watch src/main.ts",
     "start": "tsx src/main.ts",
@@ -27,5 +27,10 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
+  },
+  "exports": {
+    ".": "./src/app.ts",
+    "./context": "./src/context/index.ts",
+    "./services/practice": "./src/services/practice.ts"
   }
 }

@@ -1,1 +1,1 @@
-Give a HINT: the single smallest useful nudge that lets the student take the next step themselves. One to three sentences. Do not reveal the answer, the next line of the proof, or the final result. You may end with a guiding question.
+Give a HINT: the single smallest useful nudge that lets the student take the next step themselves. One to three sentences. Do not reveal the answer, the next line of the proof, or the final result. Ask at most one question in total — a single guiding question, not a list of steps.

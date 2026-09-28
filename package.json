@@ -10,17 +10,21 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @marginalia/server --filter @marginalia/web dev",
-    "start": "pnpm --filter @marginalia/web build && pnpm --filter @marginalia/server start",
+    "start": "node scripts/marginalia.mjs start",
     "build": "pnpm --filter @marginalia/web build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --workspace-concurrency=1 test",
     "test:e2e": "pnpm --filter @marginalia/web test:e2e",
-    "mcp": "pnpm --silent --filter @marginalia/mcp start",
+    "mcp": "node scripts/marginalia.mjs mcp",
     "db:generate": "pnpm --filter @marginalia/db generate",
-    "fixtures": "node scripts/make-fixtures.mjs"
+    "fixtures": "node scripts/make-fixtures.mjs",
+    "eval:prompts": "pnpm --silent --filter @marginalia/server exec tsx src/eval/prompt-regression.ts"
   },
   "devDependencies": {
     "pdf-lib": "^1.17.1",
     "tsx": "^4.23.15"
+  },
+  "bin": {
+    "marginalia": "scripts/marginalia.mjs"
   }
 }

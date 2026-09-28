@@ -18,6 +18,8 @@ export class MockProvider implements LLMProvider {
     const reply =
       req.purpose === "ping"
         ? "pong"
+        : req.purpose === "vision"
+          ? "Chapter 7 Continuity. 7.1 Limits and continuity. A function f is continuous at a if $\\lim_{x\\to a} f(x) = f(a)$."
         : req.purpose === "summary"
           ? "Earlier the student asked about the current topic and the tutor answered with hints."
           : req.purpose === "opening"

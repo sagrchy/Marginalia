@@ -73,3 +73,28 @@ describe("extractJson", () => {
     expect(() => extractJson("no json")).toThrow();
   });
 });
+
+describe("cleanStrings", () => {
+  it("strips leaked wrapper tags from structured output strings only at the edges", async () => {
+    const { cleanStrings } = await import("../src/llm/provider");
+    expect(
+      cleanStrings({ notes_draft_md: "notes\n</notes_draft_md>\n", open_questions: ["<open_questions>x"], c: "keep <b>inner</b>", d: "ends in </details>", n: 3 }),
+    ).toEqual({
+      notes_draft_md: "notes",
+      open_questions: ["x"],
+      c: "keep <b>inner</b>",
+      d: "ends in </details>",
+      n: 3,
+    });
+  });
+});
+
+describe("prompt regression checks", () => {
+  it("flags over-long replies, extra questions and proofs under hints-first", async () => {
+    const { evaluate } = await import("../src/eval/prompt-regression");
+    expect(evaluate("What does the definition give you if you choose δ = ε/2?", { maxWords: 90, maxQuestions: 1, noFullProof: true })).toEqual([]);
+    expect(evaluate("Here is the proof. ... This completes the proof. ∎ Any questions? Clear?", { noFullProof: true, maxQuestions: 1 })).toHaveLength(2);
+    expect(evaluate("- a\n- b\n- c\n- d\n- e\n- f", { maxBullets: 5 })).toEqual(["6 bullets > 5"]);
+    expect(evaluate("Is $x?$ fine", { maxQuestions: 0 })).toEqual([]);
+  });
+});

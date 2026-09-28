@@ -12,3 +12,4 @@ playwright-report/
 .vite/
 *.log
 .DS_Store
+.claude/launch.json

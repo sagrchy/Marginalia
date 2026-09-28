@@ -5,7 +5,7 @@ import { getSettings } from "../services/settings";
 import { AgentSdkProvider } from "./agent-sdk";
 import { AnthropicApiProvider } from "./anthropic-api";
 import { MockProvider } from "./mock";
-import { LLMError, type LLMChunk, type LLMProvider, type Msg, type PageImage } from "./provider";
+import { LLMError, cleanStrings, type LLMChunk, type LLMProvider, type Msg, type PageImage } from "./provider";
 import { logUsage } from "./usage";
 
 export type RouteRequest = {
@@ -109,7 +109,7 @@ export class LLMRouter {
     const inEst = estimateTokens(req.system) + req.messages.reduce((n, m) => n + estimateTokens(m.content), 0) + (req.images?.length ?? 0) * 1200;
     const t0 = Date.now();
     try {
-      const result = await provider.complete({ ...req, model }, schema);
+      const result = cleanStrings(await provider.complete({ ...req, model }, schema));
       logUsage(this.db, {
         sessionId: req.sessionId,
         role: req.role,

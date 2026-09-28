@@ -47,7 +47,9 @@ export class AnthropicApiProvider implements LLMProvider {
         }
       }
       const final = await stream.finalMessage();
-      yield { type: "usage", inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens };
+      const u = final.usage;
+      const input = u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+      yield { type: "usage", inputTokens: input, outputTokens: u.output_tokens };
     } catch (err) {
       throw normalize(err, req.signal);
     }

@@ -1,0 +1,66 @@
+.dock-wrap {
+  height: 100%;
+  width: 100%;
+}
+.dock-wrap .dockview-theme-light,
+.dock-wrap .marginalia-dock {
+  --dv-group-view-background-color: var(--paper);
+  --dv-tabs-and-actions-container-background-color: var(--paper);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--paper);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--paper);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--paper);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--paper);
+  --dv-activegroup-visiblepanel-tab-color: var(--ink);
+  --dv-activegroup-hiddenpanel-tab-color: var(--grey-2);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--grey-1);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--grey-2);
+  --dv-tab-divider-color: var(--grey-3);
+  --dv-separator-border: var(--grey-3);
+  --dv-paneview-header-border-color: var(--grey-3);
+  --dv-tabs-and-actions-container-height: 28px;
+  --dv-tabs-and-actions-container-font-size: 11px;
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--ink);
+  --dv-drag-over-background-color: var(--mark);
+  --dv-drag-over-border-color: var(--ink);
+  --dv-icon-hover-background-color: var(--wash);
+  --dv-floating-box-shadow: none;
+  --dv-border-radius: 0;
+  color-scheme: inherit;
+  font-family: var(--font-meta);
+}
+.dock-wrap .dv-tabs-and-actions-container {
+  border-bottom: var(--rule-hair) solid var(--ink);
+}
+/* Active pane: heavy top edge. */
+.dock-wrap .dv-groupview.dv-active-group > .dv-tabs-and-actions-container {
+  border-top: var(--rule-heavy) solid var(--ink);
+}
+.dock-wrap .dv-groupview > .dv-tabs-and-actions-container {
+  border-top: var(--rule-heavy) solid transparent;
+}
+.dock-wrap .dv-tab {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10.5px;
+  padding: 0 10px;
+}
+.dock-wrap .dv-tab.dv-active-tab {
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+.dock-wrap .dv-split-view-container > .dv-sash-container > .dv-sash,
+.dock-wrap .dv-view-container > .dv-view:not(:first-child)::before {
+  background: var(--grey-3);
+}
+.dock-wrap .dv-view-container.dv-horizontal > .dv-view:not(:first-child)::before,
+.dock-wrap .dv-view-container.dv-vertical > .dv-view:not(:first-child)::before {
+  background-color: var(--grey-3) !important;
+}
+.pane-body {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-text);
+  font-size: var(--font-size);
+}

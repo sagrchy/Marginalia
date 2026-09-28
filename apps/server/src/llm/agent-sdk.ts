@@ -75,7 +75,10 @@ export class AgentSdkProvider implements LLMProvider {
           for (const block of m.message.content) if (block.type === "text") yield { type: "text", text: block.text };
         } else if (m.type === "result") {
           if (m.subtype !== "success" || m.is_error) throw classify(m.subtype === "success" ? m.result : [m.subtype, ...m.errors].join(": "), m as { api_error_status?: number | null });
-          yield { type: "usage", inputTokens: m.usage.input_tokens, outputTokens: m.usage.output_tokens };
+          const u = m.usage;
+          // Cached prefix tokens are reported separately; count them so the meter reflects real context size.
+          const input = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+          yield { type: "usage", inputTokens: input, outputTokens: u.output_tokens };
         }
       }
     } catch (err) {

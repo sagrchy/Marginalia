@@ -49,6 +49,20 @@ export const ERROR_COPY: Record<LLMErrorKind, string> = {
   unknown: "Something went wrong talking to the model.",
 };
 
+/**
+ * Strip a wrapper tag a model sometimes leaks into a string field, e.g. notes_draft_md ending in
+ * "</notes_draft_md>". Only tags named after the field itself are removed, so real HTML survives.
+ */
+export function cleanStrings<T>(v: T, key?: string): T {
+  if (typeof v === "string" && key) {
+    const k = key.replace(/[^a-z0-9_]/gi, "");
+    return v.replace(new RegExp(`\\s*</?${k}>\\s*$`, "i"), "").replace(new RegExp(`^\\s*<${k}>\\s*`, "i"), "") as T;
+  }
+  if (Array.isArray(v)) return v.map((x) => cleanStrings(x, key)) as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cleanStrings(x, k)])) as T;
+  return v;
+}
+
 /** Extract the first JSON object from a text reply (fallback when native structured output is unavailable). */
 export function extractJson(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
