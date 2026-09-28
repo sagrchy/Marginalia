@@ -1,0 +1,1 @@
+Explain the selected passage (or, if none, the key idea on the current page) in the subject's style. Start from what the student likely already knows. Keep it to a few short paragraphs, then ask one check question.

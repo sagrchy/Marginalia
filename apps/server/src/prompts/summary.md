@@ -1,0 +1,1 @@
+Fold the older conversation turns below into the running summary of this tutoring session. Keep what matters for continuing: questions asked, what the student understood or struggled with, hints already given, and commitments. At most 120 words. Output only the new summary text.

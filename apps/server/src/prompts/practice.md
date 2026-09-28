@@ -1,0 +1,1 @@
+Write {count} practice items from the material below. Mix the types that suit the subject: recall, explain_why, prove_derive, apply, argue. Each item has a prompt, a model answer, the concept names it tests, and the printed page range it comes from. Prompts must be answerable from the material. Prefer items that target shaky concepts from the learner snapshot.

@@ -1,0 +1,1 @@
+Grade the student's written answer to the practice item against the model answer. Return a grade (again = wrong or blank, hard = partly right, good = right, easy = right and fluent) and one or two sentences of feedback that point to the first gap.

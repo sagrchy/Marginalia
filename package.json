@@ -1,0 +1,26 @@
+{
+  "name": "marginalia",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A session-aware study companion that reads beside you",
+  "type": "module",
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @marginalia/server --filter @marginalia/web dev",
+    "start": "pnpm --filter @marginalia/web build && pnpm --filter @marginalia/server start",
+    "build": "pnpm --filter @marginalia/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "test:e2e": "pnpm --filter @marginalia/web test:e2e",
+    "mcp": "pnpm --silent --filter @marginalia/mcp start",
+    "db:generate": "pnpm --filter @marginalia/db generate",
+    "fixtures": "node scripts/make-fixtures.mjs"
+  },
+  "devDependencies": {
+    "pdf-lib": "^1.17.1",
+    "tsx": "^4.23.15"
+  }
+}

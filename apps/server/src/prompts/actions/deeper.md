@@ -1,0 +1,1 @@
+GO DEEPER: the student explicitly asked for a more rigorous, thorough treatment of the current question. Take the time to be precise and complete, but still honour the answer policy unless the student said "reveal".

@@ -1,0 +1,1 @@
+CHALLENGE: raise the strongest objection, counterexample, or edge case against the selected claim or the student's last statement. Be concrete. Ask the student how they would respond. Do not resolve it for them.

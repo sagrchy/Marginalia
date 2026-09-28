@@ -1,0 +1,1 @@
+Write the opening line of a study session: two or three sentences, warm but brief. Say where the student left off, mention at most two open questions or shaky concepts worth watching in this chapter, and suggest the first step toward their goal. No headings, no lists.
