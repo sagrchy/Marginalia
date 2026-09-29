@@ -112,7 +112,8 @@ export function libraryRoutes({ db, ws, indexer }: Deps) {
 
   app.get("/books/:id", (c) => {
     const b = must(db.select().from(books).where(and(eq(books.id, id(c)), isNull(books.deletedAt))).get(), "Book not found");
-    return c.json({ ...bookOut(b), fileMissing: !fs.existsSync(ws.bookPdf(b.slug)), subject: db.select().from(subjects).where(eq(subjects.id, b.subjectId)).get() });
+    // The password goes only to the local viewer (the server listens on 127.0.0.1) so it can open the file.
+    return c.json({ ...bookOut(b), password: b.password, fileMissing: !fs.existsSync(ws.bookPdf(b.slug)), subject: db.select().from(subjects).where(eq(subjects.id, b.subjectId)).get() });
   });
 
   app.patch("/books/:id", async (c) => {

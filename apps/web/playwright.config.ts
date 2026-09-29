@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 import os from "node:os";
 import path from "node:path";
 
-const port = 4319;
+const port = 4329;
 const dataDir = path.join(os.tmpdir(), `marginalia-e2e-${Date.now()}`);
 
 export default defineConfig({
@@ -23,6 +23,6 @@ export default defineConfig({
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { PORT: String(port), MARGINALIA_DATA_DIR: dataDir, MARGINALIA_PROVIDER: "mock" },
+    env: { PORT: String(port), MARGINALIA_DATA_DIR: dataDir, MARGINALIA_ENGINE: "mock" },
   },
 });

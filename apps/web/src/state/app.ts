@@ -1,99 +1,74 @@
 import { create } from "zustand";
-import { api, type ClientSettings, type Meter } from "../api/client";
+import type { Settings, SettingsPatch } from "@marginalia/shared";
+import { api, type SettingsInfo, type Subject } from "../lib/api";
 
-export type Route =
-  | { name: "front" }
-  | { name: "read"; bookId: number }
-  | { name: "report"; sessionId: number }
-  | { name: "subject"; subjectId: number }
-  | { name: "review" }
-  | { name: "settings" };
-
-export function parseRoute(hash: string): Route {
-  const h = hash.replace(/^#\/?/, "");
-  const [a, b] = h.split("/");
-  if (a === "read" && b) return { name: "read", bookId: Number(b) };
-  if (a === "report" && b) return { name: "report", sessionId: Number(b) };
-  if (a === "subject" && b) return { name: "subject", subjectId: Number(b) };
-  if (a === "review") return { name: "review" };
-  if (a === "settings") return { name: "settings" };
-  return { name: "front" };
-}
-
-export function href(r: Route): string {
-  switch (r.name) {
-    case "front":
-      return "#/";
-    case "read":
-      return `#/read/${r.bookId}`;
-    case "report":
-      return `#/report/${r.sessionId}`;
-    case "subject":
-      return `#/subject/${r.subjectId}`;
-    default:
-      return `#/${r.name}`;
-  }
-}
-
-export function navigate(r: Route) {
-  window.location.hash = href(r);
-}
-
-type Flash = { id: number; text: string; kind: "info" | "error" };
+export type Toast = { id: number; text: string; kind?: "info" | "error"; action?: { label: string; run: () => void }; ms?: number };
 
 type AppState = {
-  route: Route;
-  settings: ClientSettings | null;
-  meter: Meter | null;
+  info: SettingsInfo | null;
+  settings: Settings | null;
+  subjects: Subject[];
+  toasts: Toast[];
   paletteOpen: boolean;
-  flashes: Flash[];
-  setRoute: (r: Route) => void;
-  loadSettings: () => Promise<void>;
-  saveSettings: (p: Parameters<typeof api.patchSettings>[0]) => Promise<void>;
-  refreshMeter: (sessionId?: number | null) => Promise<void>;
-  setPalette: (open: boolean) => void;
-  flash: (text: string, kind?: Flash["kind"]) => void;
+  load: () => Promise<void>;
+  save: (p: SettingsPatch) => Promise<void>;
+  loadSubjects: () => Promise<Subject[]>;
+  toast: (t: Omit<Toast, "id">) => number;
+  dismiss: (id: number) => void;
+  setPalette: (v: boolean) => void;
 };
 
-let flashId = 0;
+let toastId = 0;
 
 export const useApp = create<AppState>((set, get) => ({
-  route: parseRoute(window.location.hash),
+  info: null,
   settings: null,
-  meter: null,
+  subjects: [],
+  toasts: [],
   paletteOpen: false,
-  flashes: [],
-  setRoute: (route) => set({ route }),
-  loadSettings: async () => {
-    const settings = await api.settings();
+  load: async () => {
+    const [info, subjects] = await Promise.all([api.settings(), api.subjects()]);
+    set({ info, settings: info.settings, subjects });
+    applyAppearance(info.settings);
+  },
+  save: async (p) => {
+    const cur = get().settings;
+    if (cur) {
+      // Optimistic, so sliders and theme switches feel instant.
+      const next = { ...cur, ...p, appearance: { ...cur.appearance, ...(p.appearance ?? {}) } } as Settings;
+      set({ settings: next });
+      applyAppearance(next);
+    }
+    const { settings } = await api.patchSettings(p);
     set({ settings });
     applyAppearance(settings);
   },
-  saveSettings: async (p) => {
-    const settings = await api.patchSettings(p);
-    set({ settings: { ...get().settings, ...settings } as ClientSettings });
-    applyAppearance(settings);
+  loadSubjects: async () => {
+    const subjects = await api.subjects();
+    set({ subjects });
+    return subjects;
   },
-  refreshMeter: async (sessionId) => {
-    try {
-      set({ meter: await api.meter(sessionId) });
-    } catch {
-      /* offline: keep last value */
-    }
+  toast: (t) => {
+    const id = ++toastId;
+    set({ toasts: [...get().toasts.slice(-3), { ...t, id }] });
+    setTimeout(() => get().dismiss(id), t.ms ?? (t.action ? 8000 : t.kind === "error" ? 7000 : 3500));
+    return id;
   },
+  dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
   setPalette: (paletteOpen) => set({ paletteOpen }),
-  flash: (text, kind = "info") => {
-    const id = ++flashId;
-    set({ flashes: [...get().flashes, { id, text, kind }] });
-    setTimeout(() => set({ flashes: get().flashes.filter((f) => f.id !== id) }), kind === "error" ? 7000 : 3500);
-  },
 }));
 
-export function applyAppearance(s: Pick<ClientSettings, "appearance">) {
+export function applyAppearance(s: Settings) {
   const root = document.documentElement;
   root.dataset.theme = s.appearance.theme;
-  root.style.setProperty("--font-size", `${s.appearance.fontSize}px`);
-  root.style.setProperty("--reading-width", `${s.appearance.readingWidth}px`);
+  root.style.setProperty("--read", `${s.appearance.fontSize}px`);
+  root.style.setProperty("--pdf-dim", String(1 - s.appearance.pdfDim / 100));
+  try {
+    localStorage.setItem("marginalia.theme", s.appearance.theme);
+  } catch {
+    /* private mode */
+  }
 }
 
-window.addEventListener("hashchange", () => useApp.getState().setRoute(parseRoute(window.location.hash)));
+export const toast = (t: Omit<Toast, "id">) => useApp.getState().toast(t);
+export const toastError = (e: unknown) => toast({ text: e instanceof Error ? e.message : String(e), kind: "error" });

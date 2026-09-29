@@ -1,0 +1,883 @@
+.reader {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.reader-bar {
+  gap: 4px;
+  padding: 0 8px;
+  flex: none;
+}
+.reader-title {
+  display: flex;
+  min-width: 0;
+  max-width: 34vw;
+  margin-left: 6px;
+  font-weight: 500;
+}
+.reader-where {
+  font-weight: 400;
+}
+.pagebox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.pagebox-input {
+  width: 52px;
+  height: 28px;
+  text-align: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.zoom {
+  display: flex;
+  align-items: center;
+  margin-left: 10px;
+  flex: none;
+}
+.zoom .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.zoom-select {
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  padding: 0 4px;
+  cursor: pointer;
+}
+.zoom-select:hover {
+  border-color: var(--line);
+}
+.session-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  max-width: 300px;
+  overflow: hidden;
+  margin-right: 4px;
+}
+.session-chip-name {
+  max-width: 140px;
+  font-weight: 500;
+}
+.session-chip-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--ink-2);
+}
+.session-chip.over {
+  border-color: var(--danger);
+}
+.session-chip.over .session-chip-bar {
+  background: var(--danger);
+}
+
+/* Layout: sidebar | viewer | resize handle | Claude */
+.reader-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+.reader-main {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: var(--viewer-bg);
+}
+.sidebar {
+  width: 280px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+  min-height: 0;
+}
+.claude {
+  width: var(--claude-w, 400px);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-height: 0;
+  border-left: 1px solid var(--line);
+}
+.claude-resize {
+  width: 6px;
+  margin-right: -6px;
+  cursor: col-resize;
+  z-index: 5;
+  flex: none;
+  position: relative;
+}
+.claude-resize:hover,
+.claude-resize:active {
+  background: var(--line-strong);
+}
+@media (max-width: 1180px) {
+  .reader-title {
+    display: none;
+  }
+  /* Not enough room for three columns: the sidebar floats over the page. */
+  .reader-body.with-claude .sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    box-shadow: var(--shadow);
+  }
+}
+@media (max-width: 900px) {
+  /* Panels float over the page instead of squeezing it. */
+  .sidebar,
+  .claude {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 30;
+    box-shadow: var(--shadow);
+  }
+  .sidebar {
+    left: 0;
+  }
+  .claude {
+    right: 0;
+    width: min(420px, 100vw);
+  }
+  .claude-resize,
+  .zoom,
+  .session-chip-name {
+    display: none;
+  }
+}
+
+/* ---------- Viewer ---------- */
+.viewer-shell {
+  position: absolute;
+  inset: 0;
+}
+.pdf-container {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+}
+.pdf-container.over-hl .textLayer {
+  cursor: pointer;
+}
+.pdfViewer {
+  padding: 10px 0 40px;
+}
+.pdfViewer .page {
+  --page-margin: 8px auto 10px;
+}
+/* Never invert or recolour the page. Optional dimming lowers brightness only. */
+.pdfViewer .page .canvasWrapper {
+  filter: brightness(var(--pdf-dim, 1));
+}
+.viewer-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hl-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  mix-blend-mode: multiply;
+}
+.hl {
+  position: absolute;
+  border-radius: 2px;
+}
+.hl-yellow {
+  background: var(--hl-yellow);
+}
+.hl-green {
+  background: var(--hl-green);
+}
+.hl-blue {
+  background: var(--hl-blue);
+}
+.hl-pink {
+  background: var(--hl-pink);
+}
+.hl-grey {
+  background: var(--hl-grey);
+}
+.hl.has-note::after {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--ink-2);
+}
+/* Keep pdf.js's own find highlights visible but calm. */
+.textLayer .highlight {
+  --highlight-bg-color: rgba(255, 170, 0, 0.35);
+  --highlight-selected-bg-color: rgba(255, 110, 0, 0.55);
+}
+.back-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  z-index: 10;
+  font-weight: 500;
+}
+.back-x {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.back-x:hover {
+  background: var(--hover);
+}
+.findbar {
+  position: absolute;
+  top: 10px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  z-index: 10;
+}
+.findbar .input {
+  width: 220px;
+  height: 30px;
+}
+.find-count {
+  min-width: 72px;
+  text-align: center;
+}
+
+/* Selection toolbar and highlight popover */
+.sel-toolbar,
+.hl-pop {
+  position: fixed;
+  z-index: 800;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+}
+.hl-pop {
+  flex-direction: column;
+  align-items: stretch;
+  width: 320px;
+  gap: 8px;
+}
+.sel-toolbar .sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 3px;
+}
+.dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+}
+.dot:hover,
+.dot.on {
+  box-shadow: 0 0 0 2px var(--ink-2);
+}
+.dot-yellow {
+  background: var(--hl-yellow-dot);
+}
+.dot-green {
+  background: var(--hl-green-dot);
+}
+.dot-blue {
+  background: var(--hl-blue-dot);
+}
+.dot-pink {
+  background: var(--hl-pink-dot);
+}
+.dot-grey {
+  background: var(--hl-grey-dot);
+}
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.tb-btn.icon {
+  padding: 0 6px;
+}
+.tb-btn:hover,
+.tb-btn.on {
+  background: var(--hover);
+  color: var(--ink);
+}
+.tb-btn.on {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.hl-note {
+  font-family: var(--font-read);
+  font-size: 15px;
+}
+.hl-note-view {
+  text-align: left;
+  border: 0;
+  background: var(--surface-2);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-family: var(--font-read);
+  font-size: 15px;
+  white-space: pre-wrap;
+  cursor: text;
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* ---------- Sidebar ---------- */
+.side-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  padding: 0 6px;
+  flex: none;
+}
+.side-tabs button {
+  flex: 1;
+  border: 0;
+  background: none;
+  padding: 11px 2px 9px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.side-tabs button.on {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+  font-weight: 500;
+}
+.side-tabs .count {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.side-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.side-empty {
+  padding: 18px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.toc {
+  padding: 6px 4px 20px;
+}
+.toc-item {
+  display: flex;
+  align-items: center;
+  border-radius: 5px;
+}
+.toc-item.on {
+  background: var(--press);
+}
+.toc-caret {
+  width: 18px;
+  height: 22px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.toc-caret.open svg {
+  transform: rotate(90deg);
+}
+.toc-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border: 0;
+  background: none;
+  padding: 5px 6px 5px 0;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.toc-link:hover {
+  color: var(--ink);
+}
+.toc-top {
+  color: var(--ink);
+  font-weight: 500;
+}
+.toc-page {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+  flex: none;
+}
+.thumbs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 10px;
+  padding: 12px;
+}
+.thumb {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  color: var(--muted);
+}
+.thumb-img {
+  width: 100%;
+  aspect-ratio: 0.72;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.thumb-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: brightness(var(--pdf-dim, 1));
+}
+.thumb.on .thumb-img {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.thumb.on {
+  color: var(--ink);
+}
+.side-filter {
+  padding: 10px 12px 6px;
+  gap: 6px;
+  flex: none;
+}
+.seg.sm button {
+  padding: 3px 9px;
+  font-size: 12.5px;
+}
+.chip-btn {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--ink-2);
+  text-align: left;
+}
+.chip-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+.chip-btn.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.side-list {
+  padding: 4px 8px 20px;
+  display: grid;
+  gap: 2px;
+}
+.side-hl {
+  position: relative;
+  display: flex;
+  border-radius: 6px;
+}
+.side-hl:hover {
+  background: var(--hover);
+}
+.side-hl-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  border: 0;
+  background: none;
+  padding: 8px 30px 8px 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.bar {
+  width: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+.hl-bar-yellow {
+  background: var(--hl-yellow-dot);
+}
+.hl-bar-green {
+  background: var(--hl-green-dot);
+}
+.hl-bar-blue {
+  background: var(--hl-blue-dot);
+}
+.hl-bar-pink {
+  background: var(--hl-pink-dot);
+}
+.hl-bar-grey {
+  background: var(--hl-grey-dot);
+}
+.side-hl-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+.clamp3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-family: var(--font-read);
+  font-size: 14px;
+}
+.side-hl-note {
+  color: var(--ink-2);
+  border-left: 2px solid var(--line-strong);
+  padding-left: 6px;
+  white-space: pre-wrap;
+}
+.side-del {
+  width: 26px;
+  height: 26px;
+  opacity: 0;
+}
+.side-hl .side-del {
+  position: absolute;
+  right: 2px;
+  top: 4px;
+}
+.side-hl:hover .side-del,
+.side-note:hover .side-del,
+.side-del:focus-visible {
+  opacity: 1;
+}
+.note-edit {
+  padding: 4px 12px 10px;
+}
+.side-note {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.side-note-body {
+  font-size: 14px;
+}
+.side-note-body .md {
+  font-size: 14.5px;
+}
+
+/* ---------- Claude ---------- */
+.claude-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 16px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  min-width: 0;
+}
+.claude-title {
+  font-weight: 600;
+}
+.claude-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.claude-empty {
+  padding: 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+.claude-empty .stack > * + * {
+  margin-top: 10px;
+}
+.claude-hello .suggest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+}
+.msg.user {
+  align-self: flex-end;
+  max-width: 88%;
+  background: var(--surface-2);
+  border-radius: 12px 12px 4px 12px;
+  padding: 8px 12px;
+}
+.msg-user-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg-quote {
+  font-family: var(--font-read);
+  font-size: 14px;
+  color: var(--ink-2);
+  border-left: 2px solid var(--line-strong);
+  padding-left: 8px;
+  margin-bottom: 6px;
+}
+.msg-page {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.msg-page:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.msg.assistant {
+  max-width: 100%;
+}
+.msg-meta {
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity var(--t);
+}
+.msg.assistant:hover .msg-meta {
+  opacity: 1;
+}
+.msg-error {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13.5px;
+}
+.activity {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.activity.running {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.activity-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.activity-toggle .rot {
+  transform: rotate(90deg);
+}
+.activity-list {
+  margin: 4px 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+.activity-list li {
+  padding: 1px 0;
+}
+.activity-list li.failed {
+  text-decoration: line-through;
+}
+.memory-card,
+.summary-card {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface);
+}
+.memory-text {
+  font-size: 14px;
+}
+.claude-foot {
+  flex: none;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--line);
+}
+.notice-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+.ask-chip {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 4px 6px 10px;
+  margin-bottom: 6px;
+  border-left: 2px solid var(--ink-2);
+  background: var(--surface-2);
+  border-radius: 0 6px 6px 0;
+}
+.ask-chip .ask-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-read);
+  font-size: 14px;
+  max-height: 4.5em;
+  overflow: hidden;
+}
+.ask-chip .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+.composer {
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 4px 6px 6px;
+}
+.composer:focus-within {
+  border-color: var(--ink-2);
+}
+.composer-input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  padding: 6px 6px;
+  line-height: 20px;
+  font: inherit;
+}
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.usage-line {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--faint);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.usage-line:hover {
+  color: var(--ink-2);
+}
+.usage-line.warn {
+  color: var(--danger);
+}
+.send {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+.send:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.end-summary {
+  max-height: 50vh;
+  overflow: auto;
+}
+.pdf-container:focus,
+.pdf-container:focus-visible {
+  outline: none;
+}
+.session-chip > * {
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  /* End stays available from the Claude panel's menu and the command palette. */
+  .session-chip .link {
+    display: none;
+  }
+  .pagebox .muted {
+    display: none;
+  }
+}

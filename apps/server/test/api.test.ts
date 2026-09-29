@@ -114,13 +114,14 @@ describe("sessions and the AI", () => {
       events: [
         { pageIndex: 1, dwellMs: 90_000 },
         { pageIndex: 2, dwellMs: 12 * 60_000 },
-        { pageIndex: 3, dwellMs: 500 }, // too short: ignored as a page view but still the last page
+        { pageIndex: 3, dwellMs: 500 }, // too short to count
       ],
     });
     expect(t.mock.sent).toHaveLength(0);
     expect(t.db.select().from(readingEvents).all()).toHaveLength(2);
     const b = (await t.req("GET", `/books/${bookId}`)).json;
-    expect(b.lastPage).toBe(3);
+    expect(b.lastPage).toBe(0); // the reader saves its page itself; time tracking never moves it
+    expect(b.lastOpenedAt).toBeGreaterThan(0);
     const s = (await t.req("GET", `/sessions/${sessionId}`)).json.session;
     expect(s.readingMs).toBe(90_000 + 12 * 60_000);
     expect(s.pages).toEqual([1, 2]);

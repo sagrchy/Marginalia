@@ -1,12 +1,12 @@
 # Marginalia
 
-A session-aware study companion that reads beside you. The PDF sits on one side and a tutor on the other. The tutor sees the page you're on and what you've covered this session. It teaches in a style you set per subject, and it keeps a small model of what you know that you can edit.
+A PDF reader with Claude beside it. You open a book, start a study session with a name and a goal, and read. Claude knows which page you're on and what you've selected, can read any page of the book itself, and keeps the whole conversation so you can pick a session up days later.
 
-This repository implements the **v1 base scope** in [`docs/Marginalia_PRD_v1.pdf`](docs/Marginalia_PRD_v1.pdf). It is single-user and local-first: one SQLite file plus your PDFs, a Node server on `127.0.0.1`, and Claude through your subscription (Agent SDK) or an API key.
+It is single-user and local-first. Everything is stored in one folder on your machine, a small Node server listens on `127.0.0.1` only, and Claude runs through **your Claude subscription** via Claude Code (the Agent SDK). There is no API key and no account.
 
 ## Quick start
 
-Requirements: Node 20+ (tested on 24), pnpm 10+, and for the subscription provider a logged-in Claude Code install (`claude` on this machine).
+You need Node 20+ (tested on 24), pnpm 10+, and Claude Code installed and logged in (`claude` works in a terminal).
 
 ```bash
 pnpm install
@@ -16,96 +16,96 @@ pnpm install
 pnpm start
 ```
 
-Then open <http://127.0.0.1:4317>. `pnpm start` builds the web app on first run and serves everything from one process. Data goes to `~/Marginalia` unless you set `MARGINALIA_DATA_DIR`.
+Then open <http://127.0.0.1:4317>. The first start builds the web app. Data lives in `~/Marginalia` unless you set `MARGINALIA_DATA_DIR`.
 
-For development with hot reload, run `pnpm dev`. It starts the server on 4317 with data in `./data` and the Vite UI on <http://127.0.0.1:5173>.
+If a v1 library (`marginalia.db`) is in the data folder, its books and sessions are imported once, and the v1 files are left untouched.
 
-To try the app without spending usage, start it with `MARGINALIA_PROVIDER=mock`, or pick **Offline mock** in Settings → Provider.
+For development with hot reload, run `pnpm dev`. To click around without using your plan, start the server with `MARGINALIA_ENGINE=mock`.
 
-### Providers and models
+## What's in it
 
-Settings → Provider switches between:
+- **Library.** Subjects hold books. You can add, rename and delete subjects, and import, rename, move and delete books (deleting can be undone for a few seconds). Imports work by drag and drop or the picker. Duplicate files and password-protected PDFs are handled, and each book gets a cover and reading progress.
+- **Book page.** This page lists the book's sessions:
+  - Start a new session with a name (defaulted from the current chapter), an optional goal, a kind (first read, problem solving or review) and an optional time box.
+  - Open sessions can be continued or ended. Ended sessions can be reopened and show Claude's summary.
+  - Each session has a "Copy terminal command" to continue the same conversation in Claude Code.
+  - Book details let you fix the contents, the page numbering and the file.
+- **Reader.** Built on pdf.js's own viewer component (the one Firefox uses), so it behaves like a browser's PDF viewer:
+  - Crisp text, working links (with a "Back to p. N" pill), and Ctrl+F find.
+  - Zoom presets, Ctrl + scroll zoom, and rotation.
+  - Printed page numbers (e.g. "xii", "143"), with the PDF number shown alongside.
+  - Themes never recolour the page. There is an optional *dim* control instead.
+- **Highlights and notes.** Select text to get a toolbar: five colours, note, ask Claude, copy. Press H to use your last colour. Click a highlight to recolour it, add a note, ask about it or delete it (with undo). The sidebar lists contents, page thumbnails, highlights and notes.
+- **Claude.** The panel beside the page streams answers and shows what Claude looked at ("Reading p. 122"):
+  - Page references in answers are clickable.
+  - "Deeper" sends one message to a stronger model. You can stop a reply, and a failed message comes back for a retry.
+  - The panel shows plan-limit and context usage.
+  - Claude can only *suggest* memories. They take effect when you approve them, either in the chat or in Settings → Memory.
+- **Settings:**
+  - **Study time:** a contributions-style calendar, totals, streak and time per book. Idle time and hidden tabs don't count.
+  - **Claude usage:** plan limits, messages and tokens.
+  - **Memory**.
+  - **Subjects:** name and tutor style.
+  - **Appearance:** Paper, Sepia, Soft grey or Dark; text size; page dim.
+  - **Claude:** models, web search, lookups per message.
+- **Commands.** Ctrl+K opens a palette for everything (go to a book, toggle panels, zoom, theme, end session).
 
-- **Claude subscription (Agent SDK)**, the default. Each call is a single-turn, tool-less query with Marginalia's own system prompt. It doesn't use the Claude Code preset, filesystem settings or session persistence. Calls draw from the same plan limits as your other Claude use.
-- **Claude API key**: paste a key in Settings, or leave it empty to use `ANTHROPIC_API_KEY`.
+### Keyboard
 
-There are four model roles, each a plain model ID string. You can override them per subject and test each one with a one-line ping.
+| Keys | Action |
+|---|---|
+| Ctrl+K | Command palette |
+| Ctrl+F | Find in book |
+| Ctrl+J | Ask Claude (focus the composer) |
+| `[` / `]` | Toggle sidebar / Claude panel |
+| H | Highlight the selection in the last colour |
+| Ctrl + / − / 0 | Zoom in / out / automatic |
+| Alt+← | Back after following a link |
+| Home / End | First / last page |
+| Esc | Close find, clear the selection chip, close popovers |
 
-| Role | Default | Used for |
-|---|---|---|
-| tutor | `claude-sonnet-5` | replies, quick actions, debrief, notes, practice |
-| fast | `claude-haiku-4-5-20251001` | Summarize, rolling summary, opening line, grading |
-| deep | `claude-opus-5-5` | Go deeper (explicit only) |
-| vision | `claude-sonnet-5` | reading scanned pages; page-image mode |
+## How Claude is used
 
-Lean mode shrinks the context, uses templated openings and sends quick actions to the fast model.
+Each session is a Claude Code conversation (`query()` from the Agent SDK) that runs in a *study workspace* at `<data>/workspace`:
 
-### Claude Code (MCP)
-
-```bash
-claude mcp add marginalia -e MARGINALIA_DATA_DIR=$HOME/Marginalia -- node /path/to/Marginalia/scripts/marginalia.mjs mcp
+```
+CLAUDE.md                     how to tutor here (read automatically by Claude Code)
+subjects/<subject>.md         tutor style per subject
+memory/approved.md            what you approved; memory/proposed/ is where Claude suggests
+books/<book>/book.md          title, contents, page numbering, which pages are scans
+books/<book>/pages/p0001.txt  the text of every page
+books/<book>/book.pdf         for reading figures/scans as images
+books/<book>/highlights.md, notes.md
+books/<book>/sessions/<date>-<name>/  session.md (goal, type), transcript.md, summary.md
 ```
 
-The server exposes 10 tools: `get_current_session`, `get_reading_trail`, `get_learner_snapshot`, `get_concepts`, `get_notes`, `get_open_questions`, `search_pages`, `add_note`, `add_practice_items` and `park_question`. Records it creates are marked `claude-code`. Settings shows the exact command for your data folder.
+Every message you send starts with a short *where I am* block: the book, the section, the page(s) on screen, your selection or highlight, and what you've read this session. Claude uses its normal Read/Grep/Glob tools to look things up, and WebSearch/WebFetch if you allow web search. It is sandboxed:
 
-### Scanned PDFs
+- There is no Bash.
+- It can only read inside the workspace.
+- It can only write memory suggestions, session summaries and scratch files.
+- Book and web text is treated as material, never as instructions.
 
-Each page's text layer is checked on import, and pages with fewer than 40 characters are marked as needing OCR. There are two engines:
+Sessions persist, so a session is resumable from the app or from a terminal with `claude --resume <id>` in the workspace.
 
-- **Vision** (the default): the page is rendered in the browser and read by the vision model on your first visit, then cached.
-- **Local OCR**: needs `ocrmypdf` + Tesseract (for example `sudo apt install ocrmypdf`). It runs once and writes `books/<hash>/ocr.pdf`.
+PDFs are indexed in a worker thread when imported:
 
-No page is ever OCR'd twice.
-
-## Keyboard
-
-`Ctrl/Cmd+K` opens the command palette, which lists every action.
-
-In the reader, these single keys work (only while focus is in the reader):
-
-| Key | Action |
-|---|---|
-| `A` | Ask |
-| `E` | Explain |
-| `H` | Hint |
-| `C` | Check me |
-| `X` | Challenge |
-| `S` | Summarize page |
-| `Q` | Park a question |
-| `N` | New note |
-| `F` | Focus mode |
-| `1` `2` `3` | Layout presets |
-| `←` `→` | Previous / next page |
-| `+` `−` | Zoom |
-
-These work anywhere:
-
-| Key | Action |
-|---|---|
-| `Ctrl+Enter` | Send the message, or accept the debrief |
-| `Ctrl+Shift+D` | Go deeper |
-| `Ctrl+.` | Close the session |
-| `Esc` | Back to the reader |
+- Text is extracted page by page (columns, running headers and hyphenation are handled).
+- Pages with no or garbled text are marked so Claude reads them as images.
+- Contents come from the bookmarks, the printed contents page, headings, or fixed page ranges, in that order.
+- Printed page numbers are reconciled against the PDF's own labels.
 
 ## Project layout
 
 ```
-apps/web        React + Vite UI: panes/, layout/ (dockview), screens/, components/, commands/, state/ (zustand), api/, theme/
-apps/server     Hono server: routes/, services/, context/ (builder, budgets, trail, snapshot), llm/ (router + adapters),
-                prompts/ (base, actions/*, debrief, notes, practice…), ingest/ (text layer, outline, OCR, vision), eval/
-packages/shared zod schemas and types (settings, debrief, API, action registry)
-packages/db     Drizzle schema, migrations, client (shared by server and MCP)
-packages/mcp    stdio MCP server
-packages/profiles  preset tutor profiles (JSON) + prompt regression scenarios
-fixtures/       test PDFs (born-digital with outline; scanned, no text layer); regenerate with `pnpm fixtures`
+apps/web          React + Vite UI: pages/ (Library, Book, reader/, settings/), components/, lib/, state/, styles/
+apps/server       Hono server: routes/, services/ (chat, study, settings, legacy import), ai/ (Agent SDK engine,
+                  sandbox, context, mock), ingest/ (extraction, labels, indexer worker), workspace.ts
+packages/shared   zod schemas and types shared by server and UI
+packages/db       Drizzle schema, migrations and client
+packages/profiles tutor styles for the preset subjects
+fixtures/         test PDFs (outline, scanned, printed contents only, headings only, two-column, not a PDF)
 ```
-
-Extension points follow PRD §13:
-
-- **New pane**: add a component and a `PANES` entry in `apps/web/src/layout/dock.tsx`.
-- **New quick action**: add `prompts/actions/<id>.md` and an entry in `packages/shared/src/actions.ts`.
-- **New preset**: add a JSON file in `packages/profiles/presets/`.
-- **New provider**: write a class implementing `LLMProvider` and add it to `FACTORIES` in `llm/router.ts`.
 
 ## Tests
 
@@ -113,34 +113,16 @@ Extension points follow PRD §13:
 pnpm test
 ```
 
-Runs 68 unit and API tests: shared schemas, db, profiles, the server (in-process against a mock provider, with the PDF fixtures) and MCP (in-memory and over real stdio).
+Runs the extraction tests against the fixtures, and API tests (in-process, with the mock engine), including the sandbox rules.
 
 ```bash
 pnpm test:e2e
 ```
 
-Runs 8 Playwright tests in the installed Chrome against the built app, including a full keyboard-only session.
-
-```bash
-pnpm eval:prompts
-```
-
-Runs the per-profile prompt regression scenarios against the configured provider, so it spends usage. Prefix with `MARGINALIA_PROVIDER=mock` for a dry run.
+Runs Playwright in your installed Chrome against the built app with the mock engine. It covers import, sessions, chat, memory approval, highlights, notes, find, ending a session, settings and delete/undo.
 
 ```bash
 pnpm typecheck
 ```
 
-Typechecks all six packages.
-
-## Status against the PRD
-
-All P0 requirements and most P1 requirements (Library, Reader, Tutor, Sessions, Notes, Questions, Practice, Weekly targets, Learner model, Models & usage, Workspace, MCP) are implemented. Milestones M0–M4 are covered by automated tests.
-
-Known gaps:
-
-- The "stuck nudge" (P1, off by default in the PRD) is not built; the setting is reserved.
-- There are 10 prompt regression scenarios in total, not about 10 per profile. Add more to `packages/profiles/scenarios/scenarios.json`.
-- The API-key provider is written against the official SDK and typechecked, but it was only exercised with the mock in tests. The subscription (Agent SDK) provider was verified live.
-- Local OCR was tested only for its "ocrmypdf not installed" path, because `ocrmypdf` isn't installed on the build machine.
-- Mobile layouts, accounts, sync and packaging are non-goals for v1.
+Typechecks every package.

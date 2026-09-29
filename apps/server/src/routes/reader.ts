@@ -12,13 +12,12 @@ export function readerRoutes({ db, ws }: Deps) {
     const r = await body(c, ReadingEvents);
     const b = must(db.select().from(books).where(eq(books.id, r.bookId)).get(), "Book not found");
     const sessionOk = r.sessionId ? db.select({ id: sessions.id }).from(sessions).where(and(eq(sessions.id, r.sessionId), eq(sessions.bookId, b.id))).get() : null;
-    let last = b.lastPage;
     for (const e of r.events) {
       if (e.pageIndex >= b.pageCount && b.pageCount > 0) continue;
       if (e.dwellMs >= 1000) db.insert(readingEvents).values({ bookId: b.id, sessionId: sessionOk ? r.sessionId : null, pageIndex: e.pageIndex, dwellMs: e.dwellMs, ts: e.at ?? Date.now() }).run();
-      last = e.pageIndex;
     }
-    db.update(books).set({ lastPage: last, lastOpenedAt: Date.now() }).where(eq(books.id, b.id)).run();
+    // The reader saves its page itself; time tracking only marks the book as recently read.
+    db.update(books).set({ lastOpenedAt: Date.now() }).where(eq(books.id, b.id)).run();
     if (sessionOk) db.update(sessions).set({ lastActiveAt: Date.now() }).where(eq(sessions.id, r.sessionId!)).run();
     return c.json({ ok: true });
   });

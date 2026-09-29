@@ -1,0 +1,143 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/newsreader/400.css";
+@import "@fontsource/newsreader/400-italic.css";
+@import "@fontsource/newsreader/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+
+/*
+ * Black-and-white at heart, easy on the eyes. Four themes; the PDF page itself is never recoloured.
+ */
+:root,
+:root[data-theme="paper"] {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --surface-2: #efeee9;
+  --ink: #17171a;
+  --ink-2: #45454b;
+  --muted: #76767c;
+  --faint: #a9a9ad;
+  --line: #e2e0da;
+  --line-strong: #cfccc4;
+  --hover: rgba(23, 23, 26, 0.05);
+  --press: rgba(23, 23, 26, 0.09);
+  --focus: #17171a;
+  --accent: #17171a;
+  --accent-ink: #ffffff;
+  --viewer-bg: #e9e8e3;
+  --danger: #a3261c;
+  --ok: #2f6b3a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 20px rgba(0, 0, 0, 0.07);
+  --heat-0: #ecebe6;
+  --heat-1: #c9c8c2;
+  --heat-2: #9b9a94;
+  --heat-3: #5f5e5a;
+  --heat-4: #17171a;
+  color-scheme: light;
+}
+
+:root[data-theme="sepia"] {
+  --bg: #f2e9d8;
+  --surface: #f9f2e4;
+  --surface-2: #eadfc9;
+  --ink: #36291c;
+  --ink-2: #57473a;
+  --muted: #86735f;
+  --faint: #b5a38c;
+  --line: #e0d2b8;
+  --line-strong: #cfbe9f;
+  --hover: rgba(54, 41, 28, 0.06);
+  --press: rgba(54, 41, 28, 0.1);
+  --focus: #36291c;
+  --accent: #36291c;
+  --accent-ink: #f9f2e4;
+  --viewer-bg: #e3d7bf;
+  --danger: #9c3020;
+  --ok: #4a6b2f;
+  --shadow: 0 1px 2px rgba(60, 40, 10, 0.08), 0 6px 20px rgba(60, 40, 10, 0.08);
+  --heat-0: #e6dac2;
+  --heat-1: #cdb893;
+  --heat-2: #a88c63;
+  --heat-3: #74593a;
+  --heat-4: #36291c;
+  color-scheme: light;
+}
+
+:root[data-theme="grey"] {
+  --bg: #dedede;
+  --surface: #e8e8e7;
+  --surface-2: #d5d5d4;
+  --ink: #2b2b2c;
+  --ink-2: #474748;
+  --muted: #6d6d6f;
+  --faint: #9a9a9c;
+  --line: #cbcbca;
+  --line-strong: #b8b8b7;
+  --hover: rgba(0, 0, 0, 0.05);
+  --press: rgba(0, 0, 0, 0.09);
+  --focus: #2b2b2c;
+  --accent: #2b2b2c;
+  --accent-ink: #ececeb;
+  --viewer-bg: #cfcfce;
+  --danger: #9a2d24;
+  --ok: #37623d;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 20px rgba(0, 0, 0, 0.07);
+  --heat-0: #d2d2d1;
+  --heat-1: #b0b0af;
+  --heat-2: #8a8a89;
+  --heat-3: #5c5c5d;
+  --heat-4: #2b2b2c;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #19191b;
+  --surface: #212124;
+  --surface-2: #2a2a2e;
+  --ink: #e2e1dc;
+  --ink-2: #c3c2bc;
+  --muted: #8f8e89;
+  --faint: #5f5e5b;
+  --line: #313135;
+  --line-strong: #414146;
+  --hover: rgba(255, 255, 255, 0.05);
+  --press: rgba(255, 255, 255, 0.09);
+  --focus: #e2e1dc;
+  --accent: #e2e1dc;
+  --accent-ink: #19191b;
+  --viewer-bg: #141416;
+  --danger: #e0786b;
+  --ok: #87b98e;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --heat-0: #29292c;
+  --heat-1: #45454a;
+  --heat-2: #6c6b6f;
+  --heat-3: #a3a29d;
+  --heat-4: #e2e1dc;
+  color-scheme: dark;
+}
+
+:root {
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-read: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --text: 14px;
+  --read: 16px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --bar: 48px;
+  --t: 120ms;
+
+  /* Highlight colours: soft enough for long reading, distinguishable in print. */
+  --hl-yellow: rgba(255, 214, 10, 0.38);
+  --hl-green: rgba(74, 190, 110, 0.32);
+  --hl-blue: rgba(80, 150, 255, 0.3);
+  --hl-pink: rgba(255, 110, 170, 0.3);
+  --hl-grey: rgba(120, 120, 120, 0.28);
+  --hl-yellow-dot: #f2c200;
+  --hl-green-dot: #3fae66;
+  --hl-blue-dot: #4a8ff5;
+  --hl-pink-dot: #ec5d9a;
+  --hl-grey-dot: #8a8a8a;
+}
