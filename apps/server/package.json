@@ -5,32 +5,31 @@
   "type": "module",
   "main": "src/app.ts",
   "scripts": {
-    "dev": "MARGINALIA_DATA_DIR=${MARGINALIA_DATA_DIR:-../../data} tsx watch src/main.ts",
+    "dev": "MARGINALIA_DATA_DIR=${MARGINALIA_DATA_DIR:-../../data} tsx watch --clear-screen=false src/main.ts",
     "start": "tsx src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.283",
-    "@anthropic-ai/sdk": "^0.128.0",
     "@hono/node-server": "^2.1.1",
     "@marginalia/db": "workspace:*",
     "@marginalia/profiles": "workspace:*",
     "@marginalia/shared": "workspace:*",
+    "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.44.7",
     "hono": "^4.13.9",
     "pdfjs-dist": "^6.3.289",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.19.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
   },
   "exports": {
-    ".": "./src/app.ts",
-    "./context": "./src/context/index.ts",
-    "./services/practice": "./src/services/practice.ts"
+    ".": "./src/app.ts"
   }
 }

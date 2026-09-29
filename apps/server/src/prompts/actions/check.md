@@ -1,1 +1,0 @@
-CHECK ME: do not explain anything yet. Ask the student to explain the selected idea (or the main idea of the current page) back to you in their own words, with one precise prompt. When they answer in a later turn, evaluate it: say what is right, point to the first gap, and ask a follow-up.

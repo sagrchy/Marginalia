@@ -1,8 +1,17 @@
-import { ProfilePreset } from "@marginalia/shared";
-import analysis from "../presets/analysis.json" with { type: "json" };
-import neuroscience from "../presets/neuroscience.json" with { type: "json" };
-import philosophy from "../presets/philosophy.json" with { type: "json" };
-import systems from "../presets/systems.json" with { type: "json" };
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-/** Preset tutor profiles, validated. Adding a preset = one JSON file + one line here. */
-export const PRESETS: ProfilePreset[] = [analysis, neuroscience, philosophy, systems].map((p) => ProfilePreset.parse(p));
+const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../styles");
+const read = (f: string) => fs.readFileSync(path.join(dir, f), "utf8").trim();
+
+/** Preset subjects and their tutor styles (Markdown the tutor reads directly). */
+export const PRESET_SUBJECTS: { name: string; slug: string; tutorStyle: string }[] = [
+  { name: "Analysis", slug: "analysis", tutorStyle: read("analysis.md") },
+  { name: "Neuroscience", slug: "neuroscience", tutorStyle: read("neuroscience.md") },
+  { name: "Philosophy", slug: "philosophy", tutorStyle: read("philosophy.md") },
+  { name: "Systems", slug: "systems", tutorStyle: read("systems.md") },
+];
+
+/** Style given to new subjects. */
+export const DEFAULT_TUTOR_STYLE = read("general.md");

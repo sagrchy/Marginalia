@@ -5,8 +5,16 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "vitest run" },
-  "dependencies": { "@marginalia/shared": "workspace:*" },
-  "devDependencies": { "typescript": "^5.9.0", "vitest": "^3.2.0", "@types/node": "^24.0.0" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "@types/node": "^24.0.0"
+  }
 }

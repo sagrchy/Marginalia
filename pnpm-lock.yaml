@@ -20,9 +20,6 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.283
         version: 0.3.283(@anthropic-ai/sdk@0.128.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(zod@4.6.5)
-      '@anthropic-ai/sdk':
-        specifier: ^0.128.0
-        version: 0.128.0(zod@4.6.5)
       '@hono/node-server':
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.9)
@@ -35,6 +32,9 @@ importers:
       '@marginalia/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
       drizzle-orm:
         specifier: ^0.44.7
         version: 0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@12.11.1)
@@ -48,6 +48,9 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       '@types/node':
         specifier: ^24.19.0
         version: 24.19.0
@@ -130,9 +133,6 @@ importers:
       '@marginalia/profiles':
         specifier: workspace:*
         version: link:../profiles
-      '@marginalia/shared':
-        specifier: workspace:*
-        version: link:../shared
       better-sqlite3:
         specifier: ^12.4.0
         version: 12.11.1
@@ -156,45 +156,7 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.19.0)(jsdom@30.1.1)(lightningcss@1.33.0)(tsx@4.23.15)
 
-  packages/mcp:
-    dependencies:
-      '@marginalia/db':
-        specifier: workspace:*
-        version: link:../db
-      '@marginalia/server':
-        specifier: workspace:*
-        version: link:../../apps/server
-      '@marginalia/shared':
-        specifier: workspace:*
-        version: link:../shared
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.30.1
-        version: 1.30.1(zod@4.6.5)
-      drizzle-orm:
-        specifier: ^0.44.7
-        version: 0.44.7(@types/better-sqlite3@7.6.13)(better-sqlite3@12.11.1)
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
-    devDependencies:
-      '@types/node':
-        specifier: ^24.19.0
-        version: 24.19.0
-      tsx:
-        specifier: ^4.23.15
-        version: 4.23.15
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.7
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.19.0)(jsdom@30.1.1)(lightningcss@1.33.0)(tsx@4.23.15)
-
   packages/profiles:
-    dependencies:
-      '@marginalia/shared':
-        specifier: workspace:*
-        version: link:../shared
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

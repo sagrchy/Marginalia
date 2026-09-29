@@ -2,47 +2,64 @@ import fs from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
-import type { Db } from "@marginalia/db";
-import { LLMRouter } from "./llm/router";
-import type { LLMProvider } from "./llm/provider";
+import { books, workspaceDir, type Db } from "@marginalia/db";
+import { isNotNull } from "drizzle-orm";
+import { makeDescriber } from "./ai/activity";
+import { AgentEngine } from "./ai/agent";
+import type { ChatEngine } from "./ai/engine";
+import { MockEngine } from "./ai/mock";
+import { Indexer } from "./ingest/indexer";
+import { purgeBook } from "./ingest/import";
 import { libraryRoutes } from "./routes/library";
+import { readerRoutes } from "./routes/reader";
 import { sessionRoutes } from "./routes/sessions";
-import { studyRoutes } from "./routes/study";
 import { systemRoutes } from "./routes/system";
 import { errorResponse, type Deps } from "./routes/util";
+import { ChatService } from "./services/chat";
+import { importLegacy } from "./services/legacy";
+import { Workspace } from "./workspace";
 
 export type AppOptions = {
   db: Db;
   dataDir: string;
-  /** Force a provider (tests). */
-  provider?: LLMProvider;
-  /** Built web app to serve in production. */
+  /** "mock" for tests/demos; defaults to the Claude Agent SDK (subscription). */
+  engine?: "agent-sdk" | "mock";
   staticDir?: string;
+  importLegacy?: boolean;
 };
 
 export function createApp(opts: AppOptions) {
-  const router = new LLMRouter(opts.db, opts.provider);
-  const deps: Deps = { db: opts.db, router, dataDir: opts.dataDir };
+  const ws = new Workspace(workspaceDir(opts.dataDir));
+  ws.ensure();
+  const indexer = new Indexer(opts.db, ws);
+  const describe = makeDescriber(opts.db, ws);
+  const engine: ChatEngine =
+    (opts.engine ?? process.env.MARGINALIA_ENGINE) === "mock" ? new MockEngine(ws) : new AgentEngine(ws, describe);
+  const chat = new ChatService(opts.db, ws, engine);
+  const deps: Deps = { db: opts.db, ws, indexer, chat, engine, dataDir: opts.dataDir };
+
+  // Books deleted in a previous run are gone for good now.
+  for (const b of opts.db.select().from(books).where(isNotNull(books.deletedAt)).all()) purgeBook(opts.db, ws, b.id);
+  const legacy = opts.importLegacy === false ? null : importLegacy(opts.db, ws, indexer, opts.dataDir);
+  ws.syncAll(opts.db);
+  indexer.resume();
+
   const app = new Hono();
-
-  app.onError((err, c) => errorResponse(err, c));
-
+  app.onError(errorResponse);
   const api = new Hono();
-  api.onError((err, c) => errorResponse(err, c));
+  api.onError(errorResponse);
   api.route("/", systemRoutes(deps));
   api.route("/", libraryRoutes(deps));
+  api.route("/", readerRoutes(deps));
   api.route("/", sessionRoutes(deps));
-  api.route("/", studyRoutes(deps));
   api.notFound((c) => c.json({ error: "Not found" }, 404));
   app.route("/api", api);
 
-  if (opts.staticDir && fs.existsSync(opts.staticDir)) {
-    const root = path.relative(process.cwd(), opts.staticDir) || ".";
-    app.use("/*", serveStatic({ root }));
-    // SPA fallback.
+  if (opts.staticDir && fs.existsSync(path.join(opts.staticDir, "index.html"))) {
+    app.use("/*", serveStatic({ root: path.relative(process.cwd(), opts.staticDir) || "." }));
     const index = fs.readFileSync(path.join(opts.staticDir, "index.html"), "utf8");
     app.get("*", (c) => c.html(index));
   }
 
-  return { app, router };
+  return { app, ...deps, legacy };
 }

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Marginalia CLI.
 //   marginalia start   build the web app (if needed) and serve on http://127.0.0.1:4317
-//   marginalia mcp     stdio MCP server for Claude Code
 //   marginalia dev     server + Vite dev server with hot reload
 // Data lives in $MARGINALIA_DATA_DIR (default ~/Marginalia).
 import { spawn } from "node:child_process";
@@ -21,9 +20,6 @@ function run(args, opts = {}) {
 }
 
 switch (cmd) {
-  case "mcp":
-    run(["--import", tsx, path.join(root, "packages/mcp/src/main.ts")]);
-    break;
   case "start": {
     const dist = path.join(root, "apps/web/dist/index.html");
     if (!fs.existsSync(dist) || process.argv.includes("--build")) {
@@ -44,6 +40,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.error(`Unknown command "${cmd}". Use: start | mcp | dev`);
+    console.error(`Unknown command "${cmd}". Use: start | dev`);
     process.exit(1);
 }

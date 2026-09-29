@@ -153,3 +153,113 @@ fs.rmSync(tmp, { recursive: true, force: true });
 const scannedPath = path.join(out, "scanned-sample.pdf");
 fs.writeFileSync(scannedPath, await scanned.save());
 console.log("wrote", scannedPath, rasterized ? "(rasterized)" : "(synthetic)");
+
+// ---------- Edge cases ----------
+const lorem = (n, seed = 1) => {
+  const words = "the function limit value interval continuity proof theorem define consider point sequence bounded number real every there exists such that therefore".split(" ");
+  let s = seed;
+  return Array.from({ length: n }, () => words[(s = (s * 9301 + 49297) % 233280) % words.length]).join(" ");
+};
+const wrap = (text, width) => {
+  const out = [];
+  let line = "";
+  for (const w of text.split(" ")) {
+    if ((line + " " + w).length > width) (out.push(line), (line = w));
+    else line = line ? line + " " + w : w;
+  }
+  if (line) out.push(line);
+  return out;
+};
+
+// 1. No outline; roman front matter; a printed Contents page; running headers and page-number footers.
+{
+  const d = await PDFDocument.create();
+  d.setTitle("Microsoft Word - notes_final_v3.docx");
+  const f = await d.embedFont(StandardFonts.TimesRoman);
+  const fb = await d.embedFont(StandardFonts.TimesRomanBold);
+  const roman = ["i", "ii", "iii", "iv"];
+  const chapters = [
+    ["1 Sets and Functions", 1],
+    ["1.1 Sets", 1],
+    ["1.2 Functions", 4],
+    ["2 Sequences", 7],
+    ["2.1 Convergence", 7],
+    ["2.2 Cauchy Sequences", 10],
+  ];
+  for (let i = 0; i < 4; i++) {
+    const p = d.addPage([432, 648]);
+    if (i === 1) {
+      p.drawText("Contents", { x: 54, y: 580, size: 20, font: fb });
+      chapters.forEach(([t, n], k) => p.drawText(`${t} ${".".repeat(Math.max(4, 50 - t.length))} ${n}`, { x: t.match(/^\d\.\d/) ? 72 : 54, y: 540 - k * 20, size: 11, font: f }));
+    } else p.drawText(i === 0 ? "Lecture Notes on Analysis" : "Preface. " + lorem(20, i), { x: 54, y: 560, size: i === 0 ? 22 : 11, font: i === 0 ? fb : f });
+    p.drawText(roman[i], { x: 210, y: 30, size: 10, font: f });
+  }
+  for (let n = 1; n <= 12; n++) {
+    const p = d.addPage([432, 648]);
+    const ch = [...chapters].reverse().find(([, s]) => s <= n);
+    p.drawText(n % 2 ? `SEQUENCES AND SERIES` : `Lecture Notes on Analysis`, { x: 54, y: 612, size: 9, font: f });
+    let y = 570;
+    if (chapters.some(([, s]) => s === n)) {
+      for (const [t] of chapters.filter(([, s]) => s === n)) {
+        p.drawText(t, { x: 54, y, size: t.match(/^\d\.\d/) ? 14 : 18, font: fb });
+        y -= 30;
+      }
+    }
+    for (const l of wrap(lorem(160, n * 7) + (n === 5 ? " uniformly continuous functions preserve Cauchy sequences" : ""), 70)) {
+      if (y < 60) break;
+      p.drawText(l, { x: 54, y, size: 11, font: f });
+      y -= 15;
+    }
+    p.drawText(String(n), { x: 210, y: 30, size: 10, font: f });
+    void ch;
+  }
+  fs.writeFileSync(path.join(out, "no-outline-contents.pdf"), await d.save());
+  console.log("wrote no-outline-contents.pdf");
+}
+
+// 2. Headings only: no outline, no contents page, big "Chapter N" headings.
+{
+  const d = await PDFDocument.create();
+  const f = await d.embedFont(StandardFonts.Helvetica);
+  const fb = await d.embedFont(StandardFonts.HelveticaBold);
+  for (let n = 0; n < 9; n++) {
+    const p = d.addPage([432, 648]);
+    let y = 590;
+    if (n % 3 === 0) {
+      p.drawText(`Chapter ${n / 3 + 1}`, { x: 54, y, size: 24, font: fb });
+      y -= 40;
+      p.drawText(["Neurons and Glia", "Synaptic Transmission", "Neural Circuits"][n / 3], { x: 54, y, size: 18, font: fb });
+      y -= 36;
+    }
+    for (const l of wrap(lorem(170, n + 3), 66)) {
+      if (y < 60) break;
+      p.drawText(l, { x: 54, y, size: 11, font: f });
+      y -= 15;
+    }
+  }
+  fs.writeFileSync(path.join(out, "headings-only.pdf"), await d.save());
+  console.log("wrote headings-only.pdf");
+}
+
+// 3. Two-column paper.
+{
+  const d = await PDFDocument.create();
+  d.setTitle("Attention in Cortical Circuits");
+  d.setAuthor("A. Researcher");
+  const f = await d.embedFont(StandardFonts.TimesRoman);
+  const fb = await d.embedFont(StandardFonts.TimesRomanBold);
+  for (let n = 0; n < 2; n++) {
+    const p = d.addPage([612, 792]);
+    if (n === 0) p.drawText("Attention in Cortical Circuits", { x: 150, y: 730, size: 20, font: fb });
+    const left = wrap(`LEFTCOLUMN ${lorem(260, n + 11)} ENDLEFT`, 44);
+    const right = wrap(`RIGHTCOLUMN ${lorem(260, n + 21)} ENDRIGHT`, 44);
+    left.forEach((l, k) => 690 - k * 13 > 50 && p.drawText(l, { x: 50, y: 690 - k * 13, size: 10, font: f }));
+    right.forEach((l, k) => 690 - k * 13 > 50 && p.drawText(l, { x: 320, y: 690 - k * 13, size: 10, font: f }));
+  }
+  fs.writeFileSync(path.join(out, "two-column.pdf"), await d.save());
+  console.log("wrote two-column.pdf");
+}
+
+// 4. Not a PDF (an EPUB-looking zip).
+fs.writeFileSync(path.join(out, "not-a-book.epub"), Buffer.concat([Buffer.from("PK\u0003\u0004"), Buffer.from("mimetypeapplication/epub+zip")]));
+console.log("wrote not-a-book.epub");

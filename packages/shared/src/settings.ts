@@ -1,105 +1,55 @@
 import { z } from "zod";
-import { ModelRole, ProviderId } from "./enums";
 
-const RoleMap = z.object({
-  tutor: z.string().min(1),
-  fast: z.string().min(1),
-  deep: z.string().min(1),
-  vision: z.string().min(1),
-});
+export const THEMES = ["paper", "sepia", "grey", "dark"] as const;
+export const Theme = z.enum(THEMES);
+export type Theme = z.infer<typeof Theme>;
+
+export const THEME_LABEL: Record<Theme, string> = {
+  paper: "Paper",
+  sepia: "Sepia",
+  grey: "Soft grey",
+  dark: "Dark",
+};
+
+export const MODELS = [
+  { id: "claude-sonnet-5", label: "Sonnet 5", note: "Balanced — the default tutor" },
+  { id: "claude-opus-5-5", label: "Opus 5.5", note: "Deepest reasoning, slower, uses more of your limits" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", note: "Fastest and lightest" },
+] as const;
 
 export const Settings = z.object({
-  provider: ProviderId.default("agent-sdk"),
-  apiKey: z.string().optional(),
-  roles: RoleMap.default({
-    tutor: "claude-sonnet-5",
-    fast: "claude-haiku-4-5-20251001",
-    deep: "claude-opus-5-5",
-    vision: "claude-sonnet-5",
-  }),
-  subjectOverrides: z.record(z.string(), RoleMap.partial()).default({}),
-  budgets: z
-    .object({
-      maxInputTokens: z.number().int().positive().default(10000),
-      leanMaxInputTokens: z.number().int().positive().default(6000),
-      maxOutputTokens: z
-        .object({
-          tutor: z.number().int().positive().default(1200),
-          notes: z.number().int().positive().default(3000),
-          debrief: z.number().int().positive().default(2500),
-          fast: z.number().int().positive().default(600),
-          practice: z.number().int().positive().default(2000),
-        })
-        .default({ tutor: 1200, notes: 3000, debrief: 2500, fast: 600, practice: 2000 }),
-    })
-    .default({
-      maxInputTokens: 10000,
-      leanMaxInputTokens: 6000,
-      maxOutputTokens: { tutor: 1200, notes: 3000, debrief: 2500, fast: 600, practice: 2000 },
-    }),
-  leanMode: z.boolean().default(false),
-  usageSoftWarnTokensPerDay: z.number().int().nonnegative().default(400000),
-  ocrEngine: z.enum(["local", "vision"]).default("vision"),
+  /** Model for normal questions. */
+  model: z.string().min(1).default("claude-sonnet-5"),
+  /** Model used when you ask to go deeper. */
+  deepModel: z.string().min(1).default("claude-opus-5-5"),
+  webSearch: z.boolean().default(true),
+  /** Most file lookups Claude may make for one message. */
+  maxTurns: z.number().int().min(1).max(40).default(12),
   appearance: z
     .object({
-      theme: z.enum(["print", "inverted"]).default("print"),
-      fontSize: z.number().int().min(12).max(24).default(17),
-      readingWidth: z.number().int().min(480).max(1400).default(820),
+      theme: Theme.default("paper"),
+      fontSize: z.number().int().min(13).max(22).default(16),
+      /** 0 = page as printed; up to 40 = dimmer page for night reading. Never inverts. */
+      pdfDim: z.number().int().min(0).max(40).default(0),
     })
-    .default({ theme: "print", fontSize: 17, readingWidth: 820 }),
-  autoLayoutBySessionType: z.boolean().default(true),
-  stuckNudgeMinutes: z.number().int().nonnegative().default(0),
+    .default({ theme: "paper", fontSize: 16, pdfDim: 0 }),
 });
 export type Settings = z.infer<typeof Settings>;
+export const DEFAULT_SETTINGS: Settings = Settings.parse({});
 
-/** Deep-partial patch with no defaults, so absent fields are left unchanged. */
 export const SettingsPatch = z
   .object({
-    provider: ProviderId,
-    apiKey: z.string(),
-    roles: RoleMap.partial(),
-    subjectOverrides: z.record(z.string(), RoleMap.partial()),
-    budgets: z
-      .object({
-        maxInputTokens: z.number().int().positive(),
-        leanMaxInputTokens: z.number().int().positive(),
-        maxOutputTokens: z
-          .object({
-            tutor: z.number().int().positive(),
-            notes: z.number().int().positive(),
-            debrief: z.number().int().positive(),
-            fast: z.number().int().positive(),
-            practice: z.number().int().positive(),
-          })
-          .partial(),
-      })
-      .partial(),
-    leanMode: z.boolean(),
-    usageSoftWarnTokensPerDay: z.number().int().nonnegative(),
-    ocrEngine: z.enum(["local", "vision"]),
+    model: z.string().min(1),
+    deepModel: z.string().min(1),
+    webSearch: z.boolean(),
+    maxTurns: z.number().int().min(1).max(40),
     appearance: z
       .object({
-        theme: z.enum(["print", "inverted"]),
-        fontSize: z.number().int().min(12).max(24),
-        readingWidth: z.number().int().min(480).max(1400),
+        theme: Theme,
+        fontSize: z.number().int().min(13).max(22),
+        pdfDim: z.number().int().min(0).max(40),
       })
       .partial(),
-    autoLayoutBySessionType: z.boolean(),
-    stuckNudgeMinutes: z.number().int().nonnegative(),
   })
   .partial();
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
-
-export const DEFAULT_SETTINGS: Settings = Settings.parse({});
-
-/** Resolve the model ID for a role, applying per-subject overrides. */
-export function resolveModel(settings: Settings, role: ModelRole, subjectSlug?: string | null): string {
-  const override = subjectSlug ? settings.subjectOverrides[subjectSlug]?.[role] : undefined;
-  return override || settings.roles[role];
-}
-
-/** Redact secrets before sending settings to the browser. */
-export function redactSettings(s: Settings): Settings & { apiKeySet: boolean } {
-  const { apiKey, ...rest } = s;
-  return { ...rest, apiKeySet: Boolean(apiKey) } as Settings & { apiKeySet: boolean };
-}

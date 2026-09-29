@@ -1,177 +1,116 @@
-import { Hono } from "hono";
+import crypto from "node:crypto";
+import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { books, events, messages, sessions, subjects } from "@marginalia/db";
-import { DebriefAcceptance, StartSessionBody, TrailEventsBody, TutorTurnBody, printedPage } from "@marginalia/shared";
-import { buildTutorContext, loadBundle } from "../context/builder";
-import { renderTrail, trailStats } from "../context/trail";
-import {
-  acceptDebrief,
-  discardDebrief,
-  generateDebrief,
-  markInactiveSessions,
-  sessionOpening,
-  startSession,
-  touchSession,
-} from "../services/session";
-import { getSettings } from "../services/settings";
-import { runTutorTurn, setLastPage } from "../services/tutor";
-import { body, idParam, must, numQuery, type Deps } from "./util";
-import { bookOut } from "./library";
+import { asc, desc, eq, sql } from "drizzle-orm";
+import { books, memories, messages, sessions, usage } from "@marginalia/db";
+import { ChatBody, SessionBody, SessionPatch, slugify, type ChatEvent } from "@marginalia/shared";
+import { folderStamp } from "../services/legacy";
+import { sessionPages, sessionReadingMs } from "../services/study";
+import { HttpError, body, id, must, type Deps } from "./util";
 
-export function sessionRoutes({ db, router }: Deps) {
+export function sessionRoutes({ db, ws, chat, engine }: Deps) {
   const app = new Hono();
 
-  /** The active session (if any) and sessions waiting for a debrief (SE-5). */
-  app.get("/sessions/current", (c) => {
-    markInactiveSessions(db);
-    const active = db.select().from(sessions).where(eq(sessions.status, "active")).orderBy(desc(sessions.startedAt)).get() ?? null;
-    const closing = db.select().from(sessions).where(eq(sessions.status, "closing")).orderBy(desc(sessions.startedAt)).all();
-    return c.json({ active, closing });
+  const withStats = (s: typeof sessions.$inferSelect) => {
+    const tok = db
+      .select({ i: sql<number>`coalesce(sum(${usage.inputTokens} + ${usage.cacheReadTokens} + ${usage.cacheCreationTokens}),0)`, o: sql<number>`coalesce(sum(${usage.outputTokens}),0)` })
+      .from(usage)
+      .where(eq(usage.sessionId, s.id))
+      .get()!;
+    return {
+      ...s,
+      readingMs: sessionReadingMs(db, s.id),
+      pages: sessionPages(db, s.id),
+      messageCount: Number(db.select({ n: sql<number>`count(*)` }).from(messages).where(eq(messages.sessionId, s.id)).get()!.n),
+      tokens: Number(tok.i) + Number(tok.o),
+      live: engine.isLive(s.id),
+      resumeCommand: s.legacy ? null : `cd "${ws.root}" && claude --resume ${s.claudeSessionId}`,
+    };
+  };
+
+  app.get("/books/:id/sessions", (c) => {
+    const rows = db.select().from(sessions).where(eq(sessions.bookId, id(c))).orderBy(desc(sessions.lastActiveAt)).all();
+    return c.json(rows.map(withStats));
   });
 
-  /** SE-6: session history. */
-  app.get("/sessions", (c) => {
-    const bookId = numQuery(c, "bookId");
-    const subjectId = numQuery(c, "subjectId");
-    const rows = db
-      .select({ s: sessions, bookTitle: books.title, pageOffset: books.pageOffset })
-      .from(sessions)
-      .innerJoin(books, eq(books.id, sessions.bookId))
-      .where(and(bookId ? eq(sessions.bookId, bookId) : undefined, subjectId ? eq(sessions.subjectId, subjectId) : undefined))
-      .orderBy(desc(sessions.startedAt))
-      .limit(200)
-      .all();
-    return c.json(
-      rows.map(({ s, bookTitle, pageOffset }) => {
-        const stats = trailStats(db, s.id);
-        return {
-          ...s,
-          bookTitle,
-          durationMin: Math.max(0, Math.round(((s.endedAt ?? s.lastActivityAt) - s.startedAt) / 60000)),
-          pages: stats.pages.map((i) => printedPage(i, pageOffset)).sort((a, b) => a - b),
-        };
-      }),
-    );
-  });
-
-  app.post("/sessions", async (c) => {
-    const b = await body(c, StartSessionBody);
-    return c.json(startSession(db, b), 201);
+  app.post("/books/:id/sessions", async (c) => {
+    const b = must(db.select().from(books).where(eq(books.id, id(c))).get(), "Book not found");
+    const s = await body(c, SessionBody);
+    const folder = `books/${b.slug}/sessions/${folderStamp(Date.now())}-${slugify(s.name, 40)}`;
+    const row = db
+      .insert(sessions)
+      .values({ bookId: b.id, name: s.name, goal: s.goal || null, type: s.type, timeboxMin: s.timeboxMin ?? null, claudeSessionId: crypto.randomUUID(), folder, status: "open" })
+      .returning()
+      .get();
+    ws.writeSessionMd(db, row.id);
+    return c.json(withStats(row), 201);
   });
 
   app.get("/sessions/:id", (c) => {
-    const id = idParam(c);
-    const b = must(loadBundle(db, id), "Session not found");
-    const msgs = db.select().from(messages).where(eq(messages.sessionId, id)).orderBy(asc(messages.id)).all();
-    const stats = trailStats(db, id);
-    return c.json({
-      session: b.session,
-      book: bookOut(b.book),
-      subject: b.subject,
-      answerPolicy: b.profile?.answerPolicy ?? "explain-first",
-      messages: msgs,
-      trail: renderTrail(stats, b.book.pageOffset, { budget: 250, detail: true }),
-    });
+    const s = must(db.select().from(sessions).where(eq(sessions.id, id(c))).get(), "Session not found");
+    const msgs = db.select().from(messages).where(eq(messages.sessionId, s.id)).orderBy(asc(messages.id)).all();
+    const mems = db.select().from(memories).where(eq(memories.sessionId, s.id)).all();
+    return c.json({ session: withStats(s), messages: msgs, memories: mems });
   });
 
   app.patch("/sessions/:id", async (c) => {
-    const id = idParam(c);
-    const patch = await body(c, StartSessionBody.pick({ goal: true, type: true, timeboxMin: true }).partial());
-    return c.json(must(db.update(sessions).set(patch).where(eq(sessions.id, id)).returning().get(), "Session not found"));
+    const p = await body(c, SessionPatch);
+    const s = must(db.update(sessions).set({ ...p, goal: p.goal === undefined ? undefined : p.goal || null }).where(eq(sessions.id, id(c))).returning().get(), "Session not found");
+    ws.writeSessionMd(db, s.id);
+    return c.json(withStats(s));
   });
 
-  /** SE-2: opening ritual. */
-  app.post("/sessions/:id/opening", async (c) => c.json(await sessionOpening(db, router, idParam(c))));
-
-  /** SE-3 / RD-3: trail events, batched and debounced by the client. No model calls. */
-  app.post("/sessions/:id/events", async (c) => {
-    const id = idParam(c);
-    const s = must(db.select().from(sessions).where(eq(sessions.id, id)).get(), "Session not found");
-    const { events: evs } = await body(c, TrailEventsBody);
-    let lastPage: number | null = null;
-    for (const e of evs) {
-      db.insert(events).values({ sessionId: id, kind: e.kind, pageIndex: e.pageIndex ?? null, dwellMs: e.dwellMs ?? null, payload: e.payload ?? null }).run();
-      if (e.kind === "page_view" && e.pageIndex != null) lastPage = e.pageIndex;
-    }
-    if (s.status === "active") touchSession(db, id, lastPage);
-    if (lastPage != null) setLastPage(db, s.bookId, lastPage);
-    return c.json({ ok: true, count: evs.length });
+  /** Reopen an ended session (its Claude conversation resumes where it left off). */
+  app.post("/sessions/:id/reopen", (c) => {
+    const s = must(db.update(sessions).set({ status: "open", endedAt: null }).where(eq(sessions.id, id(c))).returning().get(), "Session not found");
+    ws.writeSessionMd(db, s.id);
+    return c.json(withStats(s));
   });
 
-  app.get("/sessions/:id/trail", (c) => {
-    const id = idParam(c);
-    const b = must(loadBundle(db, id), "Session not found");
-    const stats = trailStats(db, id);
-    return c.json({
-      text: renderTrail(stats, b.book.pageOffset, { budget: 400, detail: true }),
-      pages: stats.pages.map((i) => printedPage(i, b.book.pageOffset)),
-      highlights: stats.highlights.length,
-      questions: stats.questions.length,
-      messages: stats.messages,
-      minutes: Math.round(stats.totalDwellMs / 60000),
+  app.delete("/sessions/:id", (c) => {
+    const s = must(db.select().from(sessions).where(eq(sessions.id, id(c))).get(), "Session not found");
+    if (chat.isBusy(s.id)) throw new HttpError(409, "Claude is still answering in this session.");
+    engine.close(s.id);
+    db.delete(sessions).where(eq(sessions.id, s.id)).run();
+    ws.removeSessionFolder(s.folder);
+    return c.body(null, 204);
+  });
+
+  const sse = (c: Context, gen: () => AsyncGenerator<ChatEvent>, onAbort?: () => void) =>
+    streamSSE(c, async (stream) => {
+      let closed = false;
+      stream.onAbort(() => {
+        closed = true;
+        onAbort?.();
+      });
+      for await (const ev of gen()) {
+        if (!closed) await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) });
+      }
     });
+
+  /** Send a message; the reply streams back as server-sent events. Closing the connection does NOT stop Claude — use /stop. */
+  app.post("/sessions/:id/chat", async (c) => {
+    const sid = id(c);
+    const b = await body(c, ChatBody);
+    must(db.select().from(sessions).where(eq(sessions.id, sid)).get(), "Session not found");
+    return sse(c, () => chat.send(sid, b));
   });
 
-  /** SE-4: close → one structured call → debrief for review. */
-  app.post("/sessions/:id/close", async (c) => {
-    const id = idParam(c);
-    must(db.select().from(sessions).where(eq(sessions.id, id)).get(), "Session not found");
-    const debrief = await generateDebrief(db, router, id);
-    return c.json({ debrief });
-  });
-
-  app.post("/sessions/:id/debrief/accept", async (c) => {
-    const id = idParam(c);
-    const input = await body(c, DebriefAcceptance);
-    return c.json(acceptDebrief(db, id, input));
-  });
-
-  app.post("/sessions/:id/debrief/discard", (c) => {
-    discardDebrief(db, idParam(c));
+  app.post("/sessions/:id/stop", async (c) => {
+    await chat.interrupt(id(c));
     return c.json({ ok: true });
   });
 
-  app.get("/sessions/:id/messages", (c) => {
-    const id = idParam(c);
-    return c.json(db.select().from(messages).where(eq(messages.sessionId, id)).orderBy(asc(messages.id)).all());
+  /** End the session: Claude writes a summary and may suggest memories, streamed like a reply. */
+  app.post("/sessions/:id/end", (c) => {
+    const sid = id(c);
+    must(db.select().from(sessions).where(eq(sessions.id, sid)).get(), "Session not found");
+    return sse(c, () => chat.end(sid));
   });
 
-  /** Inspect the context packet a turn would send, without calling a model (budget tuning). */
-  app.post("/tutor/context-preview", async (c) => {
-    const t = await body(c, TutorTurnBody);
-    const b = must(loadBundle(db, t.sessionId), "Session not found");
-    const ctx = buildTutorContext(db, b, getSettings(db), { action: t.action, text: t.text, pageIndex: t.pageIndex, selection: t.selection });
-    return c.json({ ...ctx, model: router.model({ role: ctx.role, subjectSlug: b.subject.slug, profileOverrides: b.profile?.modelOverrides }) });
-  });
-
-  /** TU-1: streamed tutor reply over SSE. Closing the connection stops generation (TU-9). */
-  app.post("/tutor/turn", async (c) => {
-    const t = await body(c, TutorTurnBody);
-    must(loadBundle(db, t.sessionId), "Session not found");
-    return streamSSE(c, async (stream) => {
-      const abort = new AbortController();
-      stream.onAbort(() => abort.abort());
-      try {
-        for await (const ev of runTutorTurn(db, router, t, abort.signal)) {
-          await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) });
-        }
-      } catch (err) {
-        await stream.writeSSE({
-          event: "error",
-          data: JSON.stringify({ type: "error", kind: "unknown", message: err instanceof Error ? err.message : String(err), retryable: false }),
-        });
-      }
-    });
-  });
-
-  /** Closing sessions with their book titles, for the Front Page. */
-  app.get("/sessions-closing", (c) => {
-    const rows = db.select().from(sessions).where(eq(sessions.status, "closing")).all();
-    const bks = rows.length ? db.select().from(books).where(inArray(books.id, rows.map((r) => r.bookId))).all() : [];
-    const subs = db.select().from(subjects).all();
-    return c.json(rows.map((r) => ({ ...r, book: bks.find((b) => b.id === r.bookId)?.title, subject: subs.find((s) => s.id === r.subjectId)?.name })));
-  });
+  /** How full this conversation's context is (like /context in Claude Code). */
+  app.get("/sessions/:id/context", async (c) => c.json(await engine.contextUsage(id(c))));
 
   return app;
 }
+

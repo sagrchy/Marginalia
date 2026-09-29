@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: { testTimeout: 30_000, hookTimeout: 30_000, env: { MARGINALIA_PROVIDER: "" } },
+  test: { testTimeout: 60_000, hookTimeout: 60_000, env: { MARGINALIA_INLINE_INDEX: "1", MARGINALIA_ENGINE: "mock" } },
 });

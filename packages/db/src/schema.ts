@@ -1,37 +1,19 @@
 import { sql } from "drizzle-orm";
-import { integer, primaryKey, real, sqliteTable, text, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const now = sql`(unixepoch('subsec') * 1000)`;
-const createdAt = () => integer("created_at", { mode: "number" }).notNull().default(now);
 
-export const tutorProfiles = sqliteTable("tutor_profiles", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull(),
-  persona: text("persona").notNull().default(""),
-  style: text("style").notNull(),
-  answerPolicy: text("answer_policy").notNull(),
-  verbosity: text("verbosity").notNull().default("normal"),
-  notation: text("notation").notNull().default(""),
-  rules: text("rules", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
-  modelOverrides: text("model_overrides", { mode: "json" }).$type<Record<string, string>>().notNull().default(sql`'{}'`),
-  sessionTypeOverrides: text("session_type_overrides", { mode: "json" })
-    .$type<Record<string, { rules?: string[]; answer_policy?: string }>>()
-    .notNull()
-    .default(sql`'{}'`),
-  preferences: text("preferences", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
-  presetSlug: text("preset_slug"),
-});
+export type Chapter = { title: string; pageIndex: number; level: number };
+export type LabelRange = { fromIndex: number; style: "arabic" | "roman" | "none"; start: number };
 
 export const subjects = sqliteTable("subjects", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
-  tutorProfileId: integer("tutor_profile_id").references(() => tutorProfiles.id),
-  createdAt: createdAt(),
+  tutorStyle: text("tutor_style").notNull().default(""),
+  position: integer("position").notNull().default(0),
+  createdAt: integer("created_at").notNull().default(now),
 });
-
-export type OutlineItem = { title: string; pageIndex: number | null; items: OutlineItem[] };
-export type ManualChapter = { title: string; from: number; to: number };
 
 export const books = sqliteTable(
   "books",
@@ -40,20 +22,34 @@ export const books = sqliteTable(
     subjectId: integer("subject_id").notNull().references(() => subjects.id),
     title: text("title").notNull(),
     author: text("author"),
-    filePath: text("file_path").notNull(),
+    /** Folder name under workspace/books/ — stable across renames. */
+    slug: text("slug").notNull(),
     fileHash: text("file_hash").notNull(),
+    fileName: text("file_name").notNull().default(""),
+    fileSize: integer("file_size").notNull().default(0),
+    password: text("password"),
     pageCount: integer("page_count").notNull().default(0),
-    pageOffset: integer("page_offset").notNull().default(0),
-    textSource: text("text_source").notNull().default("native"),
-    outline: text("outline", { mode: "json" }).$type<OutlineItem[]>().notNull().default(sql`'[]'`),
-    manualChapters: text("manual_chapters", { mode: "json" }).$type<ManualChapter[]>().notNull().default(sql`'[]'`),
+    /** Printed page label per PDF page (from the PDF, or derived from labelRanges). */
+    pageLabels: text("page_labels", { mode: "json" }).$type<string[] | null>(),
+    labelRanges: text("label_ranges", { mode: "json" }).$type<LabelRange[] | null>(),
+    chapters: text("chapters", { mode: "json" }).$type<Chapter[]>().notNull().default(sql`'[]'`),
+    /** outline | contents | headings | blocks | manual */
+    chaptersSource: text("chapters_source").notNull().default("blocks"),
+    /** queued | indexing | ready | failed */
+    indexState: text("index_state").notNull().default("queued"),
+    indexProgress: real("index_progress").notNull().default(0),
+    indexError: text("index_error"),
+    emptyPages: integer("empty_pages").notNull().default(0),
+    garbledPages: integer("garbled_pages").notNull().default(0),
+    /** Most pages are wider than tall — likely two book pages per PDF page. */
+    spreads: integer("spreads", { mode: "boolean" }).notNull().default(false),
     lastPage: integer("last_page").notNull().default(0),
-    pageImageMode: integer("page_image_mode", { mode: "boolean" }).notNull().default(false),
-    ocrStatus: text("ocr_status").notNull().default("none"), // none | pending | running | done | failed
-    ocrError: text("ocr_error"),
-    createdAt: createdAt(),
+    lastOpenedAt: integer("last_opened_at"),
+    /** Soft delete so a delete can be undone for a short while. */
+    deletedAt: integer("deleted_at"),
+    createdAt: integer("created_at").notNull().default(now),
   },
-  (t) => [uniqueIndex("books_hash_idx").on(t.fileHash)],
+  (t) => [uniqueIndex("books_hash_idx").on(t.fileHash), uniqueIndex("books_slug_idx").on(t.slug)],
 );
 
 export const pages = sqliteTable(
@@ -64,10 +60,9 @@ export const pages = sqliteTable(
       .references(() => books.id, { onDelete: "cascade" }),
     pageIndex: integer("page_index").notNull(),
     text: text("text").notNull().default(""),
-    textSource: text("text_source").notNull().default("native"),
+    /** ok | empty | garbled */
+    quality: text("quality").notNull().default("ok"),
     charCount: integer("char_count").notNull().default(0),
-    sectionLabel: text("section_label"),
-    needsOcr: integer("needs_ocr", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [primaryKey({ columns: [t.bookId, t.pageIndex] })],
 );
@@ -79,39 +74,41 @@ export const sessions = sqliteTable(
     bookId: integer("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "cascade" }),
-    subjectId: integer("subject_id").notNull().references(() => subjects.id),
-    type: text("type").notNull(),
+    name: text("name").notNull(),
     goal: text("goal"),
+    type: text("type").notNull().default("first_read"),
     timeboxMin: integer("timebox_min"),
-    status: text("status").notNull().default("active"),
+    /** open | ended */
+    status: text("status").notNull().default("open"),
+    /** Claude Code session id (UUID) — resumable with `claude --resume`. */
+    claudeSessionId: text("claude_session_id").notNull(),
+    claudeStarted: integer("claude_started", { mode: "boolean" }).notNull().default(false),
+    /** Folder relative to the workspace, e.g. books/spivak/sessions/2026-09-29-1410-continuity */
+    folder: text("folder").notNull(),
+    summary: text("summary"),
+    /** Imported from Marginalia v1 — history only, not resumable in Claude Code. */
+    legacy: integer("legacy", { mode: "boolean" }).notNull().default(false),
     startedAt: integer("started_at").notNull().default(now),
     endedAt: integer("ended_at"),
-    lastActivityAt: integer("last_activity_at").notNull().default(now),
-    startPage: integer("start_page"),
-    endPage: integer("end_page"),
-    opening: text("opening"),
-    rollingSummary: text("rolling_summary").notNull().default(""),
-    summarizedThroughId: integer("summarized_through_id").notNull().default(0),
-    debrief: text("debrief", { mode: "json" }).$type<unknown>(),
-    debriefAccepted: integer("debrief_accepted", { mode: "boolean" }).notNull().default(false),
+    lastActiveAt: integer("last_active_at").notNull().default(now),
   },
-  (t) => [index("sessions_status_idx").on(t.status)],
+  (t) => [index("sessions_book_idx").on(t.bookId)],
 );
 
-export const events = sqliteTable(
-  "events",
+/** Reading time per page, the source of study time and the "where I am" trail. */
+export const readingEvents = sqliteTable(
+  "reading_events",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    sessionId: integer("session_id")
+    bookId: integer("book_id")
       .notNull()
-      .references(() => sessions.id, { onDelete: "cascade" }),
+      .references(() => books.id, { onDelete: "cascade" }),
+    sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
     ts: integer("ts").notNull().default(now),
-    kind: text("kind").notNull(),
-    pageIndex: integer("page_index"),
-    dwellMs: integer("dwell_ms"),
-    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>(),
+    pageIndex: integer("page_index").notNull(),
+    dwellMs: integer("dwell_ms").notNull(),
   },
-  (t) => [index("events_session_idx").on(t.sessionId)],
+  (t) => [index("reading_book_idx").on(t.bookId), index("reading_session_idx").on(t.sessionId), index("reading_ts_idx").on(t.ts)],
 );
 
 export const messages = sqliteTable(
@@ -122,150 +119,89 @@ export const messages = sqliteTable(
       .notNull()
       .references(() => sessions.id, { onDelete: "cascade" }),
     role: text("role").notNull(), // user | assistant
-    action: text("action").notNull().default("ask"),
     content: text("content").notNull(),
+    /** For user messages: the view when sent. */
     pageIndex: integer("page_index"),
     selection: text("selection"),
+    /** For assistant messages: what Claude did (searched, read pages, web). */
+    activity: text("activity", { mode: "json" }).$type<{ kind: string; label: string }[]>().notNull().default(sql`'[]'`),
     model: text("model"),
-    inTokensEst: integer("in_tokens_est"),
-    outTokensEst: integer("out_tokens_est"),
-    status: text("status").notNull().default("ok"), // ok | partial | error
-    questionId: integer("question_id"),
-    createdAt: createdAt(),
+    /** ok | stopped | error */
+    status: text("status").notNull().default("ok"),
+    createdAt: integer("created_at").notNull().default(now),
   },
   (t) => [index("messages_session_idx").on(t.sessionId)],
 );
 
-export const annotations = sqliteTable(
-  "annotations",
+export const highlights = sqliteTable(
+  "highlights",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     bookId: integer("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "cascade" }),
+    sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
+    color: text("color").notNull().default("yellow"),
+    /** First page of the highlight (for sorting and jumping). */
     pageIndex: integer("page_index").notNull(),
-    kind: text("kind").notNull(),
-    rects: text("rects", { mode: "json" }).$type<{ x: number; y: number; w: number; h: number }[]>().notNull().default(sql`'[]'`),
-    quote: text("quote").notNull().default(""),
-    noteId: integer("note_id"),
-    messageId: integer("message_id"),
-    createdAt: createdAt(),
+    parts: text("parts", { mode: "json" })
+      .$type<{ pageIndex: number; rects: [number, number, number, number][]; text: string }[]>()
+      .notNull(),
+    text: text("text").notNull().default(""),
+    note: text("note"),
+    createdAt: integer("created_at").notNull().default(now),
+    updatedAt: integer("updated_at").notNull().default(now),
   },
-  (t) => [index("annotations_book_page_idx").on(t.bookId, t.pageIndex)],
+  (t) => [index("highlights_book_idx").on(t.bookId)],
 );
 
-export const notes = sqliteTable("notes", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  subjectId: integer("subject_id").notNull().references(() => subjects.id),
-  bookId: integer("book_id").references(() => books.id, { onDelete: "set null" }),
-  sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
-  pageFrom: integer("page_from"),
-  pageTo: integer("page_to"),
-  conceptIds: text("concept_ids", { mode: "json" }).$type<number[]>().notNull().default(sql`'[]'`),
-  title: text("title").notNull(),
-  bodyMd: text("body_md").notNull().default(""),
-  source: text("source").notNull().default("user"),
-  compression: text("compression"),
-  createdAt: createdAt(),
-  updatedAt: integer("updated_at").notNull().default(now),
-});
-
-export const questions = sqliteTable("questions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  subjectId: integer("subject_id").notNull().references(() => subjects.id),
-  bookId: integer("book_id").references(() => books.id, { onDelete: "set null" }),
-  sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
-  pageIndex: integer("page_index"),
-  selection: text("selection"),
-  text: text("text").notNull(),
-  status: text("status").notNull().default("open"),
-  answerNoteId: integer("answer_note_id"),
-  source: text("source").notNull().default("app"),
-  createdAt: createdAt(),
-  resolvedAt: integer("resolved_at"),
-});
-
-export const concepts = sqliteTable(
-  "concepts",
+export const notes = sqliteTable(
+  "notes",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    subjectId: integer("subject_id").notNull().references(() => subjects.id),
-    name: text("name").notNull(),
-    aliases: text("aliases", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
-    status: text("status").notNull().default("introduced"),
-    description: text("description").notNull().default(""),
-    lastUpdated: integer("last_updated").notNull().default(now),
-  },
-  (t) => [uniqueIndex("concepts_subject_name_idx").on(t.subjectId, t.name)],
-);
-
-export const conceptEvidence = sqliteTable("concept_evidence", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  conceptId: integer("concept_id")
-    .notNull()
-    .references(() => concepts.id, { onDelete: "cascade" }),
-  sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
-  kind: text("kind").notNull(),
-  polarity: integer("polarity").notNull().default(0),
-  detail: text("detail").notNull(),
-  pageIndex: integer("page_index"),
-  createdAt: createdAt(),
-});
-
-export const practiceItems = sqliteTable("practice_items", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  subjectId: integer("subject_id").notNull().references(() => subjects.id),
-  bookId: integer("book_id").references(() => books.id, { onDelete: "set null" }),
-  sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
-  pageFrom: integer("page_from"),
-  pageTo: integer("page_to"),
-  conceptIds: text("concept_ids", { mode: "json" }).$type<number[]>().notNull().default(sql`'[]'`),
-  type: text("type").notNull(),
-  prompt: text("prompt").notNull(),
-  answer: text("answer").notNull().default(""),
-  source: text("source").notNull().default("tutor"),
-  createdAt: createdAt(),
-});
-
-export const reviews = sqliteTable("reviews", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  itemId: integer("item_id")
-    .notNull()
-    .references(() => practiceItems.id, { onDelete: "cascade" }),
-  ts: integer("ts").notNull().default(now),
-  grade: text("grade").notNull(),
-  intervalDays: real("interval_days").notNull(),
-  ease: real("ease").notNull(),
-  dueAt: integer("due_at").notNull(),
-});
-
-export const weeklyTargets = sqliteTable(
-  "weekly_targets",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    subjectId: integer("subject_id")
+    bookId: integer("book_id")
       .notNull()
-      .references(() => subjects.id, { onDelete: "cascade" }),
-    weekStart: text("week_start").notNull(),
-    metric: text("metric").notNull(),
-    target: integer("target").notNull(),
+      .references(() => books.id, { onDelete: "cascade" }),
+    sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
+    pageIndex: integer("page_index"),
+    body: text("body").notNull(),
+    /** user | ai (a saved answer) */
+    source: text("source").notNull().default("user"),
+    createdAt: integer("created_at").notNull().default(now),
+    updatedAt: integer("updated_at").notNull().default(now),
   },
-  (t) => [uniqueIndex("weekly_targets_unique").on(t.subjectId, t.weekStart, t.metric)],
+  (t) => [index("notes_book_idx").on(t.bookId)],
 );
 
-export const usageLog = sqliteTable(
-  "usage_log",
+export const memories = sqliteTable("memories", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  text: text("text").notNull(),
+  /** proposed | approved | dismissed */
+  status: text("status").notNull().default("proposed"),
+  /** ai | user */
+  source: text("source").notNull().default("ai"),
+  subjectId: integer("subject_id").references(() => subjects.id, { onDelete: "set null" }),
+  bookId: integer("book_id").references(() => books.id, { onDelete: "set null" }),
+  sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
+  messageId: integer("message_id"),
+  createdAt: integer("created_at").notNull().default(now),
+  decidedAt: integer("decided_at"),
+});
+
+export const usage = sqliteTable(
+  "usage",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     ts: integer("ts").notNull().default(now),
-    sessionId: integer("session_id"),
-    role: text("role").notNull(),
-    purpose: text("purpose").notNull().default(""),
+    sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
     model: text("model").notNull(),
-    provider: text("provider").notNull(),
-    inTokensEst: integer("in_tokens_est").notNull().default(0),
-    outTokensEst: integer("out_tokens_est").notNull().default(0),
-    latencyMs: integer("latency_ms").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+    costUsd: real("cost_usd").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    turns: integer("turns").notNull().default(0),
     ok: integer("ok", { mode: "boolean" }).notNull().default(true),
     error: text("error"),
   },

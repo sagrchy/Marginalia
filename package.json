@@ -13,12 +13,10 @@
     "start": "node scripts/marginalia.mjs start",
     "build": "pnpm --filter @marginalia/web build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --workspace-concurrency=1 test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "test:e2e": "pnpm --filter @marginalia/web test:e2e",
-    "mcp": "node scripts/marginalia.mjs mcp",
-    "db:generate": "pnpm --filter @marginalia/db generate",
     "fixtures": "node scripts/make-fixtures.mjs",
-    "eval:prompts": "pnpm --silent --filter @marginalia/server exec tsx src/eval/prompt-regression.ts"
+    "db:generate": "pnpm --filter @marginalia/db generate"
   },
   "devDependencies": {
     "pdf-lib": "^1.17.1",

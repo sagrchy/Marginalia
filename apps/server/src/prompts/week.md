@@ -1,1 +1,0 @@
-Review the student's week from the local statistics below. Write a short summary (at most 80 words) of what went well and what slipped, then propose next week's targets per subject (metric: sessions, minutes, pages or items). Be realistic: nudge targets up only where they were met.

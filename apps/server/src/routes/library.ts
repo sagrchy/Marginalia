@@ -1,342 +1,218 @@
 import fs from "node:fs";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { annotations, books, events, notes, pages, sessions, subjects, tutorProfiles } from "@marginalia/db";
-import { AnnotationBody, BookPatch, TutorProfile, clipTokens, printedPage, slugify } from "@marginalia/shared";
-import { z } from "zod";
-import { DuplicateBookError, importPdf } from "../ingest/import";
-import { runLocalOcr } from "../ingest/ocr-worker";
-import { visionPageText } from "../ingest/vision";
-import { getSettings } from "../services/settings";
-import { HttpError, body, idParam, must, numQuery, type Deps } from "./util";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { books, highlights, notes, pages, readingEvents, sessions, subjects } from "@marginalia/db";
+import { BookPatch, SubjectBody, SubjectPatch, slugify } from "@marginalia/shared";
+import { DEFAULT_TUTOR_STYLE } from "@marginalia/profiles";
+import { ImportError, importPdf, purgeBook, sha256 } from "../ingest/import";
+import { labelsFromRanges } from "../ingest/labels";
+import { HttpError, body, id, must, type Deps } from "./util";
 
-type Profile = typeof tutorProfiles.$inferSelect;
-export const profileToJson = (p: Profile): TutorProfile => ({
-  id: String(p.id),
-  name: p.name,
-  persona: p.persona,
-  style: p.style as TutorProfile["style"],
-  answer_policy: p.answerPolicy as TutorProfile["answer_policy"],
-  verbosity: p.verbosity as TutorProfile["verbosity"],
-  notation: p.notation,
-  rules: p.rules,
-  model_overrides: p.modelOverrides,
-  session_type_overrides: p.sessionTypeOverrides as TutorProfile["session_type_overrides"],
-  preferences: p.preferences,
-});
+const UNDO_MS = 12_000;
 
-const profileToRow = (p: TutorProfile) => ({
-  name: p.name,
-  persona: p.persona,
-  style: p.style,
-  answerPolicy: p.answer_policy,
-  verbosity: p.verbosity,
-  notation: p.notation,
-  rules: p.rules,
-  modelOverrides: p.model_overrides as Record<string, string>,
-  sessionTypeOverrides: p.session_type_overrides as Record<string, { rules?: string[]; answer_policy?: string }>,
-  preferences: p.preferences,
-});
+export function bookOut(b: typeof books.$inferSelect) {
+  const { password, ...rest } = b;
+  return { ...rest, hasPassword: Boolean(password) };
+}
 
-export function libraryRoutes({ db, router, dataDir }: Deps) {
+export function libraryRoutes({ db, ws, indexer }: Deps) {
   const app = new Hono();
 
-  /** LIB-7: subjects, then books with last page, progress and last session date. */
-  app.get("/library", (c) => {
-    const subs = db.select().from(subjects).orderBy(asc(subjects.id)).all();
-    const bks = db.select().from(books).orderBy(desc(books.createdAt)).all();
-    const lastSession = new Map(
-      db
-        .select({ bookId: sessions.bookId, last: sql<number>`max(${sessions.startedAt})` })
-        .from(sessions)
-        .groupBy(sessions.bookId)
-        .all()
-        .map((r) => [r.bookId, r.last]),
-    );
-    const viewed = new Map(
-      db
-        .select({ bookId: sessions.bookId, n: sql<number>`count(distinct ${events.pageIndex})` })
-        .from(events)
-        .innerJoin(sessions, eq(sessions.id, events.sessionId))
-        .where(eq(events.kind, "page_view"))
-        .groupBy(sessions.bookId)
-        .all()
-        .map((r) => [r.bookId, r.n]),
-    );
-    const needOcr = new Map(
-      db
-        .select({ bookId: pages.bookId, n: sql<number>`count(*)` })
-        .from(pages)
-        .where(eq(pages.needsOcr, true))
-        .groupBy(pages.bookId)
-        .all()
-        .map((r) => [r.bookId, r.n]),
-    );
-    return c.json(
-      subs.map((s) => ({
-        ...s,
-        books: bks
-          .filter((b) => b.subjectId === s.id)
-          .map((b) => ({
-            ...bookOut(b),
-            lastSessionAt: lastSession.get(b.id) ?? null,
-            pagesViewed: Number(viewed.get(b.id) ?? 0),
-            progress: b.pageCount ? Math.round(((b.lastPage + 1) / b.pageCount) * 100) : 0,
-            pagesNeedingOcr: Number(needOcr.get(b.id) ?? 0),
-          })),
-      })),
-    );
-  });
-
-  app.get("/subjects", (c) => c.json(db.select().from(subjects).orderBy(asc(subjects.id)).all()));
+  // ---------- Subjects ----------
+  app.get("/subjects", (c) => c.json(db.select().from(subjects).orderBy(asc(subjects.position), asc(subjects.id)).all()));
 
   app.post("/subjects", async (c) => {
-    const { name } = await body(c, z.object({ name: z.string().min(1).max(100) }));
-    let slug = slugify(name);
-    if (db.select().from(subjects).where(eq(subjects.slug, slug)).get()) slug = `${slug}-${Date.now().toString(36)}`;
-    const profile = db
-      .insert(tutorProfiles)
-      .values({ name: `${name} tutor`, persona: "A patient, clear tutor.", style: "explainer", answerPolicy: "explain-first" })
-      .returning()
-      .get();
-    return c.json(db.insert(subjects).values({ name, slug, tutorProfileId: profile.id }).returning().get(), 201);
+    const b = await body(c, SubjectBody);
+    let slug = slugify(b.name, 40);
+    for (let n = 2; db.select().from(subjects).where(eq(subjects.slug, slug)).get(); n++) slug = `${slugify(b.name, 36)}-${n}`;
+    const max = db.select({ m: sql<number>`coalesce(max(${subjects.position}), 0)` }).from(subjects).get()!.m;
+    const row = db.insert(subjects).values({ name: b.name, slug, tutorStyle: b.tutorStyle?.trim() || DEFAULT_TUTOR_STYLE, position: max + 1 }).returning().get();
+    ws.writeSubject(row);
+    return c.json(row, 201);
   });
 
   app.patch("/subjects/:id", async (c) => {
-    const id = idParam(c);
-    const { name } = await body(c, z.object({ name: z.string().min(1).max(100) }));
-    return c.json(must(db.update(subjects).set({ name }).where(eq(subjects.id, id)).returning().get()));
+    const p = await body(c, SubjectPatch);
+    const row = must(db.update(subjects).set(p).where(eq(subjects.id, id(c))).returning().get(), "Subject not found");
+    ws.writeSubject(row);
+    for (const b of db.select().from(books).where(eq(books.subjectId, row.id)).all()) ws.writeBookMd(db, b.id);
+    return c.json(row);
   });
 
-  app.get("/subjects/:id/profile", (c) => {
-    const s = must(db.select().from(subjects).where(eq(subjects.id, idParam(c))).get(), "Subject not found");
-    const p = must(s.tutorProfileId ? db.select().from(tutorProfiles).where(eq(tutorProfiles.id, s.tutorProfileId)).get() : null, "Profile not found");
-    return c.json(profileToJson(p));
-  });
-
-  /** TP-4: profiles are data, edited in a form, importable and exportable. */
-  app.put("/subjects/:id/profile", async (c) => {
-    const s = must(db.select().from(subjects).where(eq(subjects.id, idParam(c))).get(), "Subject not found");
-    const p = await body(c, TutorProfile);
-    if (s.tutorProfileId) {
-      return c.json(profileToJson(db.update(tutorProfiles).set(profileToRow(p)).where(eq(tutorProfiles.id, s.tutorProfileId)).returning().get()));
-    }
-    const created = db.insert(tutorProfiles).values(profileToRow(p)).returning().get();
-    db.update(subjects).set({ tutorProfileId: created.id }).where(eq(subjects.id, s.id)).run();
-    return c.json(profileToJson(created));
-  });
-
-  app.get("/subjects/:id/profile/export", (c) => {
-    const s = must(db.select().from(subjects).where(eq(subjects.id, idParam(c))).get(), "Subject not found");
-    const p = must(s.tutorProfileId ? db.select().from(tutorProfiles).where(eq(tutorProfiles.id, s.tutorProfileId)).get() : null);
-    const { id: _id, ...profile } = profileToJson(p);
-    c.header("Content-Disposition", `attachment; filename="${s.slug}-profile.json"`);
-    return c.json({ subject: { name: s.name, slug: s.slug }, profile });
+  /** A subject can only be deleted once it has no books (move or delete them first). */
+  app.delete("/subjects/:id", (c) => {
+    const sid = id(c);
+    const n = db.select({ n: sql<number>`count(*)` }).from(books).where(and(eq(books.subjectId, sid), isNull(books.deletedAt))).get()!.n;
+    if (n > 0) throw new HttpError(409, `Move or delete its ${n} book${n === 1 ? "" : "s"} first.`);
+    const s = must(db.select().from(subjects).where(eq(subjects.id, sid)).get(), "Subject not found");
+    for (const b of db.select().from(books).where(eq(books.subjectId, sid)).all()) purgeBook(db, ws, b.id); // recently deleted ones
+    db.delete(subjects).where(eq(subjects.id, sid)).run();
+    ws.removeSubjectFile(s.slug);
+    return c.body(null, 204);
   });
 
   // ---------- Books ----------
-
-  /** LIB-1/2: import by file picker or drag-and-drop (multipart). */
-  app.post("/books", async (c) => {
-    const form = await c.req.parseBody();
-    const file = form.file;
-    if (!(file instanceof File)) throw new HttpError(400, "Missing file");
-    if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") throw new HttpError(400, "Only PDF files are supported");
-    const subjectId = Number(form.subjectId);
-    must(db.select().from(subjects).where(eq(subjects.id, subjectId)).get(), "Subject not found");
-    const data = new Uint8Array(await file.arrayBuffer());
-    try {
-      const { book, needOcr } = await importPdf(db, dataDir, {
-        data,
-        fileName: file.name,
-        subjectId,
-        title: typeof form.title === "string" ? form.title : null,
-        settings: getSettings(db),
-      });
-      return c.json({ book: bookOut(book), needOcr }, 201);
-    } catch (e) {
-      if (e instanceof DuplicateBookError) throw new HttpError(409, e.message, { bookId: e.bookId });
-      if (e instanceof Error && /Invalid PDF|PDF header/i.test(e.message)) throw new HttpError(422, "That file is not a readable PDF");
-      throw e;
-    }
-  });
-
-  app.get("/books/:id", (c) => {
-    const b = must(db.select().from(books).where(eq(books.id, idParam(c))).get(), "Book not found");
-    const needOcr = db.select({ n: sql<number>`count(*)` }).from(pages).where(and(eq(pages.bookId, b.id), eq(pages.needsOcr, true))).get()!.n;
-    const labels = db
-      .select({ i: pages.pageIndex, label: pages.sectionLabel, needsOcr: pages.needsOcr, source: pages.textSource })
-      .from(pages)
-      .where(eq(pages.bookId, b.id))
-      .orderBy(asc(pages.pageIndex))
+  /** Library: every book with its reading stats. */
+  app.get("/books", (c) => {
+    const rows = db.select().from(books).where(isNull(books.deletedAt)).orderBy(desc(sql`coalesce(${books.lastOpenedAt}, ${books.createdAt})`)).all();
+    const time = new Map(
+      db
+        .select({ b: readingEvents.bookId, ms: sql<number>`sum(${readingEvents.dwellMs})` })
+        .from(readingEvents)
+        .groupBy(readingEvents.bookId)
+        .all()
+        .map((r) => [r.b, Number(r.ms)]),
+    );
+    const sess = db
+      .select({ b: sessions.bookId, n: sql<number>`count(*)`, last: sql<number>`max(${sessions.lastActiveAt})`, open: sql<number>`sum(case when ${sessions.status} = 'open' then 1 else 0 end)` })
+      .from(sessions)
+      .groupBy(sessions.bookId)
       .all();
-    return c.json({ ...bookOut(b), pagesNeedingOcr: Number(needOcr), pageMeta: labels });
-  });
-
-  app.patch("/books/:id", async (c) => {
-    const id = idParam(c);
-    const patch = await body(c, BookPatch);
-    const b = must(db.update(books).set(patch).where(eq(books.id, id)).returning().get(), "Book not found");
-    if (patch.manualChapters) {
-      // LIB-5 fallback: manual chapter ranges label pages when the PDF has no outline.
-      for (const ch of patch.manualChapters)
-        db.update(pages)
-          .set({ sectionLabel: ch.title })
-          .where(and(eq(pages.bookId, id), sql`${pages.pageIndex} between ${ch.from} and ${ch.to}`))
-          .run();
-    }
-    if (patch.textSource === "ocr_local") void runLocalOcr(db, id);
-    return c.json(bookOut(b));
-  });
-
-  app.get("/books/:id/file", (c) => {
-    const b = must(db.select().from(books).where(eq(books.id, idParam(c))).get(), "Book not found");
-    if (!fs.existsSync(b.filePath)) throw new HttpError(404, "PDF file missing from the data directory");
-    const size = fs.statSync(b.filePath).size;
-    c.header("Content-Type", "application/pdf");
-    c.header("Content-Length", String(size));
-    c.header("Cache-Control", "private, max-age=31536000, immutable");
-    return stream(c, async (s) => {
-      for await (const chunk of fs.createReadStream(b.filePath)) await s.write(chunk as Uint8Array);
-    });
-  });
-
-  app.get("/books/:id/pages/:idx", (c) => {
-    const bookId = idParam(c);
-    const idx = idParam(c, "idx");
-    const b = must(db.select().from(books).where(eq(books.id, bookId)).get(), "Book not found");
-    const p = must(db.select().from(pages).where(and(eq(pages.bookId, bookId), eq(pages.pageIndex, idx))).get(), "Page not found");
-    return c.json({ ...p, printed: printedPage(idx, b.pageOffset) });
-  });
-
-  /** LIB-4 Vision engine: the client sends a rendered page image on first visit; text is cached. */
-  app.post("/books/:id/pages/:idx/vision", async (c) => {
-    const bookId = idParam(c);
-    const idx = idParam(c, "idx");
-    const { image, sessionId } = await body(c, z.object({ image: z.string().min(100), sessionId: z.number().int().optional().nullable() }));
-    const b = must(db.select().from(books).where(eq(books.id, bookId)).get(), "Book not found");
-    const s = db.select().from(subjects).where(eq(subjects.id, b.subjectId)).get();
-    return c.json(await visionPageText(db, router, { bookId, pageIndex: idx, imageBase64: image, subjectSlug: s?.slug, sessionId }));
-  });
-
-  app.post("/books/:id/ocr", (c) => {
-    const id = idParam(c);
-    must(db.select().from(books).where(eq(books.id, id)).get(), "Book not found");
-    db.update(books).set({ textSource: "ocr_local", ocrStatus: "pending" }).where(eq(books.id, id)).run();
-    void runLocalOcr(db, id);
-    return c.json({ started: true }, 202);
-  });
-
-  /** RD-4: search within the book using the cached text. */
-  app.get("/books/:id/search", (c) => {
-    const bookId = idParam(c);
-    const q = (c.req.query("q") ?? "").trim();
-    if (q.length < 2) return c.json([]);
-    const b = must(db.select().from(books).where(eq(books.id, bookId)).get(), "Book not found");
-    const esc = q.replace(/[\\%_]/g, (m) => "\\" + m);
-    const rows = db
-      .select({ i: pages.pageIndex, text: pages.text })
-      .from(pages)
-      .where(and(eq(pages.bookId, bookId), sql`${pages.text} like ${`%${esc}%`} escape '\\'`))
-      .orderBy(asc(pages.pageIndex))
-      .limit(100)
-      .all();
-    const needle = q.toLowerCase();
+    const hl = new Map(db.select({ b: highlights.bookId, n: sql<number>`count(*)` }).from(highlights).groupBy(highlights.bookId).all().map((r) => [r.b, r.n]));
+    const nt = new Map(db.select({ b: notes.bookId, n: sql<number>`count(*)` }).from(notes).groupBy(notes.bookId).all().map((r) => [r.b, r.n]));
     return c.json(
-      rows.map((r) => {
-        const at = r.text.toLowerCase().indexOf(needle);
-        const start = Math.max(0, at - 60);
+      rows.map((b) => {
+        const s = sess.find((x) => x.b === b.id);
         return {
-          pageIndex: r.i,
-          printed: printedPage(r.i, b.pageOffset),
-          snippet: (start > 0 ? "…" : "") + r.text.slice(start, at + q.length + 80).replace(/\s+/g, " ") + "…",
-          matchStart: at - start + (start > 0 ? 1 : 0),
-          matchLength: q.length,
+          ...bookOut(b),
+          readingMs: time.get(b.id) ?? 0,
+          sessionCount: Number(s?.n ?? 0),
+          openSessions: Number(s?.open ?? 0),
+          lastSessionAt: s?.last ?? null,
+          highlightCount: Number(hl.get(b.id) ?? 0),
+          noteCount: Number(nt.get(b.id) ?? 0),
         };
       }),
     );
   });
 
-  // ---------- Annotations (RD-2, RD-5) ----------
-
-  app.get("/books/:id/annotations", (c) => {
-    const bookId = idParam(c);
-    const rows = db.select().from(annotations).where(eq(annotations.bookId, bookId)).orderBy(asc(annotations.pageIndex), asc(annotations.id)).all();
-    const noteIds = rows.map((r) => r.noteId).filter((x): x is number => x != null);
-    const ns = noteIds.length ? db.select().from(notes).where(sql`${notes.id} in (${sql.join(noteIds, sql`, `)})`).all() : [];
-    return c.json(rows.map((r) => ({ ...r, note: ns.find((n) => n.id === r.noteId)?.bodyMd ?? null })));
+  /** Import by file picker or drag-and-drop. Returns as soon as the file is stored; indexing continues in the background. */
+  app.post("/books", async (c) => {
+    const form = await c.req.parseBody();
+    const file = form.file;
+    if (!(file instanceof File)) throw new HttpError(400, "Choose a PDF to import.");
+    try {
+      const book = await importPdf(db, ws, {
+        data: new Uint8Array(await file.arrayBuffer()),
+        fileName: file.name,
+        subjectId: Number(form.subjectId),
+        password: typeof form.password === "string" && form.password ? form.password : null,
+      });
+      indexer.enqueue(book.id);
+      return c.json(bookOut(book), 201);
+    } catch (e) {
+      if (e instanceof ImportError) {
+        const status = e.code === "duplicate" ? 409 : e.code.startsWith("password") ? 401 : e.code === "not_pdf" ? 415 : 422;
+        throw new HttpError(status, e.message, { code: e.code, ...e.extra });
+      }
+      throw e;
+    }
   });
 
-  app.post("/annotations", async (c) => {
-    const a = await body(c, AnnotationBody);
-    const b = must(db.select().from(books).where(eq(books.id, a.bookId)).get(), "Book not found");
-    let noteId: number | null = null;
-    if (a.note) {
-      noteId = db
-        .insert(notes)
-        .values({
-          subjectId: b.subjectId,
-          bookId: b.id,
-          sessionId: a.sessionId ?? null,
-          pageFrom: a.pageIndex,
-          pageTo: a.pageIndex,
-          title: `Note on p. ${printedPage(a.pageIndex, b.pageOffset)}: ${clipTokens(a.quote || "highlight", 12)}`,
-          bodyMd: a.note,
-        })
-        .returning()
-        .get().id;
-    }
-    const row = db
-      .insert(annotations)
-      .values({ bookId: a.bookId, pageIndex: a.pageIndex, kind: a.kind, rects: a.rects, quote: a.quote, noteId, messageId: a.messageId ?? null })
-      .returning()
-      .get();
-    if (a.sessionId && a.kind !== "margin_pin") {
-      db.insert(events)
-        .values({ sessionId: a.sessionId, kind: "highlight", pageIndex: a.pageIndex, payload: { quote: clipTokens(a.quote, 60), style: a.kind, annotationId: row.id } })
-        .run();
-      if (a.note) db.insert(events).values({ sessionId: a.sessionId, kind: "note", pageIndex: a.pageIndex, payload: { noteId } }).run();
-    }
-    return c.json({ ...row, note: a.note ?? null }, 201);
+  app.get("/books/:id", (c) => {
+    const b = must(db.select().from(books).where(and(eq(books.id, id(c)), isNull(books.deletedAt))).get(), "Book not found");
+    return c.json({ ...bookOut(b), fileMissing: !fs.existsSync(ws.bookPdf(b.slug)), subject: db.select().from(subjects).where(eq(subjects.id, b.subjectId)).get() });
   });
 
-  /** Attach or edit the note on a highlight. */
-  app.patch("/annotations/:id", async (c) => {
-    const id = idParam(c);
-    const { note, kind } = await body(c, z.object({ note: z.string().max(20000).optional().nullable(), kind: AnnotationBody.shape.kind.optional() }));
-    const a = must(db.select().from(annotations).where(eq(annotations.id, id)).get(), "Annotation not found");
-    const b = db.select().from(books).where(eq(books.id, a.bookId)).get()!;
-    let noteId = a.noteId;
-    if (note != null) {
-      if (noteId) db.update(notes).set({ bodyMd: note, updatedAt: Date.now() }).where(eq(notes.id, noteId)).run();
-      else
-        noteId = db
-          .insert(notes)
-          .values({
-            subjectId: b.subjectId,
-            bookId: b.id,
-            pageFrom: a.pageIndex,
-            pageTo: a.pageIndex,
-            title: `Note on p. ${printedPage(a.pageIndex, b.pageOffset)}: ${clipTokens(a.quote || "highlight", 12)}`,
-            bodyMd: note,
-          })
-          .returning()
-          .get().id;
+  app.patch("/books/:id", async (c) => {
+    const bid = id(c);
+    const p = await body(c, BookPatch);
+    const cur = must(db.select().from(books).where(eq(books.id, bid)).get(), "Book not found");
+    if (p.subjectId != null) must(db.select().from(subjects).where(eq(subjects.id, p.subjectId)).get(), "Subject not found");
+    const set: Partial<typeof books.$inferInsert> = { ...p };
+    if (p.chapters) {
+      set.chapters = [...p.chapters].sort((a, z) => a.pageIndex - z.pageIndex).filter((ch) => ch.pageIndex < cur.pageCount);
+      set.chaptersSource = "manual";
     }
-    const row = db.update(annotations).set({ noteId, ...(kind ? { kind } : {}) }).where(eq(annotations.id, id)).returning().get();
-    return c.json({ ...row, note: note ?? null });
+    if (p.labelRanges !== undefined) {
+      set.labelRanges = p.labelRanges;
+      set.pageLabels = p.labelRanges?.length ? labelsFromRanges(p.labelRanges, cur.pageCount) : null;
+    }
+    const b = db.update(books).set(set).where(eq(books.id, bid)).returning().get();
+    if (p.title || p.author !== undefined || p.subjectId || p.chapters || p.labelRanges !== undefined) {
+      ws.writeBookMd(db, bid);
+      // Page files carry printed numbers in their header.
+      if (p.labelRanges !== undefined) ws.writePages(b.slug, db.select().from(pages).where(eq(pages.bookId, bid)).all(), b.pageLabels);
+    }
+    return c.json(bookOut(b));
   });
 
-  app.delete("/annotations/:id", (c) => {
-    db.delete(annotations).where(eq(annotations.id, idParam(c))).run();
-    return c.body(null, 204);
+  /** Opening a book records it as recently read. */
+  app.post("/books/:id/opened", (c) => {
+    db.update(books).set({ lastOpenedAt: Date.now() }).where(eq(books.id, id(c))).run();
+    return c.json({ ok: true });
+  });
+
+  app.post("/books/:id/reindex", (c) => {
+    const bid = id(c);
+    must(db.select().from(books).where(eq(books.id, bid)).get(), "Book not found");
+    indexer.enqueue(bid);
+    return c.json({ ok: true }, 202);
+  });
+
+  /** Delete with undo: the book is hidden now and removed for good after a short delay. */
+  app.delete("/books/:id", (c) => {
+    const bid = id(c);
+    const b = must(db.select().from(books).where(eq(books.id, bid)).get(), "Book not found");
+    db.update(books).set({ deletedAt: Date.now() }).where(eq(books.id, bid)).run();
+    setTimeout(() => {
+      const still = db.select().from(books).where(eq(books.id, bid)).get();
+      if (still?.deletedAt) purgeBook(db, ws, bid);
+    }, UNDO_MS).unref?.();
+    const counts = {
+      sessions: db.select({ n: sql<number>`count(*)` }).from(sessions).where(eq(sessions.bookId, bid)).get()!.n,
+      highlights: db.select({ n: sql<number>`count(*)` }).from(highlights).where(eq(highlights.bookId, bid)).get()!.n,
+      notes: db.select({ n: sql<number>`count(*)` }).from(notes).where(eq(notes.bookId, bid)).get()!.n,
+    };
+    return c.json({ ok: true, title: b.title, undoMs: UNDO_MS, counts });
+  });
+
+  app.post("/books/:id/restore", (c) => {
+    const b = must(db.update(books).set({ deletedAt: null }).where(eq(books.id, id(c))).returning().get(), "That book was already removed.");
+    return c.json(bookOut(b));
+  });
+
+  /** Replace a missing or moved PDF with the same file (matched by content). */
+  app.post("/books/:id/relink", async (c) => {
+    const b = must(db.select().from(books).where(eq(books.id, id(c))).get(), "Book not found");
+    const form = await c.req.parseBody();
+    const file = form.file;
+    if (!(file instanceof File)) throw new HttpError(400, "Choose the PDF file.");
+    const data = new Uint8Array(await file.arrayBuffer());
+    if (sha256(data) !== b.fileHash) throw new HttpError(409, "That isn't the same file as this book.");
+    fs.mkdirSync(ws.bookDir(b.slug), { recursive: true });
+    fs.writeFileSync(ws.bookPdf(b.slug), data);
+    return c.json({ ok: true });
+  });
+
+  /** The PDF, with byte ranges so the viewer can stream large books. */
+  app.get("/books/:id/file", (c) => {
+    const b = must(db.select().from(books).where(eq(books.id, id(c))).get(), "Book not found");
+    const file = ws.bookPdf(b.slug);
+    if (!fs.existsSync(file)) throw new HttpError(404, "The PDF file is missing.", { code: "file_missing" });
+    const size = fs.statSync(file).size;
+    c.header("Accept-Ranges", "bytes");
+    c.header("Content-Type", "application/pdf");
+    c.header("Cache-Control", "private, max-age=3600");
+    const range = c.req.header("range")?.match(/bytes=(\d*)-(\d*)/);
+    let start = 0;
+    let end = size - 1;
+    if (range) {
+      start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      end = range[1] && range[2] ? Math.min(size - 1, Number(range[2])) : size - 1;
+      if (start >= size || start > end) {
+        c.header("Content-Range", `bytes */${size}`);
+        return c.body(null, 416);
+      }
+      c.status(206);
+      c.header("Content-Range", `bytes ${start}-${end}/${size}`);
+    }
+    c.header("Content-Length", String(end - start + 1));
+    return stream(c, async (s) => {
+      for await (const chunk of fs.createReadStream(file, { start, end })) await s.write(chunk as Uint8Array);
+    });
   });
 
   return app;
-}
-
-export function bookOut(b: typeof books.$inferSelect) {
-  const { filePath: _f, ...rest } = b;
-  return rest;
 }
