@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ChatBody, SettingsPatch, cleanTitle, clip, formatDuration, formatRanges, slugify } from "../src/index";
+import { ChatBody, Settings, SettingsPatch, cleanTitle, clip, effortFor, formatDuration, formatRanges, slugify } from "../src/index";
 
 describe("shared utilities", () => {
   it("compresses page lists into ranges", () => {
@@ -26,6 +26,13 @@ describe("shared utilities", () => {
     expect(cleanTitle("scan_0001")).toBe("");
   });
 
+  it("defaults to Sonnet 5 at medium effort and fits effort to the model", () => {
+    expect(Settings.parse({})).toMatchObject({ model: "claude-sonnet-5", effort: "medium" });
+    expect(effortFor("claude-opus-5-5", "max")).toBe("max");
+    expect(effortFor("claude-haiku-4-5-20251001", "high")).toBeNull();
+    expect(effortFor("claude-sonnet-5", null)).toBe("medium");
+  });
+
   it("clips long text", () => {
     expect(clip("abcdef", 4)).toBe("abc…");
     expect(clip("abc", 4)).toBe("abc");
@@ -34,7 +41,8 @@ describe("shared utilities", () => {
   it("validates chat and settings payloads", () => {
     expect(ChatBody.safeParse({ text: "  ", view: {} }).success).toBe(false);
     const ok = ChatBody.parse({ text: "hi", view: {} });
-    expect(ok.deep).toBe(false);
+    expect(ok.model).toBeUndefined();
+    expect(ChatBody.safeParse({ text: "hi", view: {}, effort: "turbo" }).success).toBe(false);
     expect(ok.view.visiblePages).toEqual([]);
     expect(SettingsPatch.safeParse({ appearance: { pdfDim: 80 } }).success).toBe(false);
     expect(SettingsPatch.parse({ appearance: { theme: "sepia" } })).toEqual({ appearance: { theme: "sepia" } });

@@ -2,7 +2,7 @@
 export type ActivityKind = "search" | "read" | "read_pdf" | "web_search" | "web_fetch" | "write" | "list" | "other";
 
 export type ChatEvent =
-  | { type: "start"; userMessageId: number; model: string }
+  | { type: "start"; userMessageId: number; model: string; effort: string | null }
   | { type: "text"; text: string }
   /** Claude is using a tool: "Searching the book for 'uniform'", "Reading p. 124"… */
   | { type: "activity"; id: string; kind: ActivityKind; label: string }
@@ -41,4 +41,19 @@ export const WINDOW_LABEL: Record<string, string> = {
   seven_day_sonnet: "Weekly Sonnet limit",
   seven_day_overage_included: "Weekly limit",
   overage: "Extra usage",
+};
+
+/** One of the plan's usage meters, exactly as Claude Code's /usage reports it. */
+export type PlanRow = {
+  /** Server meter kind: "session" (5-hour), "weekly_all", "weekly_scoped"… */
+  kind: string;
+  group: string;
+  label: string;
+  /** 0–100 */
+  percent: number;
+  resetsAt: number | null;
+  /** normal | warning | critical */
+  severity: string;
+  /** The row a single-value indicator should show. */
+  active: boolean;
 };

@@ -1,23 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Minus, MoreHorizontal, PanelLeft, PanelRight, Plus, Search } from "lucide-react";
-import type { ChatEvent } from "@marginalia/shared";
+import { createPortal } from "react-dom";
+import { ArrowLeft, Columns2, Minus, MoreHorizontal, PanelLeft, PanelRight, Plus, Search } from "lucide-react";
+import { SESSION_TYPE_LABEL, type ChatEvent } from "@marginalia/shared";
 import { api } from "../../lib/api";
 import { formatDuration, indexForInput, label, niceTitle, sectionFor } from "../../lib/format";
 import { go } from "../../lib/router";
 import { openPdf, PdfPasswordError } from "../../lib/pdf";
 import { streamEvents } from "../../lib/api";
 import { toast, useApp } from "../../state/app";
-import { Dialog, Menu } from "../../components/ui";
+import { Dialog, EditableText, Menu } from "../../components/ui";
 import { Markdown } from "../../components/Markdown";
 import { useRegisterCommands, type Command } from "../../components/Palette";
 import { ClaudePanel } from "./Claude";
 import { Sidebar } from "./Sidebar";
 import { DEFAULT_LAYOUT, resetReader, useReader } from "./state";
 import { isTyping, Viewer } from "./Viewer";
-import { ZOOM_PRESETS } from "./viewer";
+import { LAYOUTS, ZOOM_PRESETS, type LayoutId } from "./viewer";
 import "./reader.css";
 
 const IDLE_MS = 5 * 60_000;
+
+export function savedLayout(bookId: number): LayoutId {
+  try {
+    const v = localStorage.getItem(`marginalia.pageLayout.${bookId}`);
+    return LAYOUTS.some((l) => l.id === v) ? (v as LayoutId) : "continuous";
+  } catch {
+    return "continuous";
+  }
+}
 
 export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessionId: number | null; startPage: number | null }) {
   const book = useReader((s) => s.book);
@@ -27,6 +37,16 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
   const [error, setError] = useState<string | null>(null);
   const [needPassword, setNeedPassword] = useState<null | { wrong: boolean }>(null);
   const [scale, setScale] = useState<{ value: string; pct: number }>({ value: "auto", pct: 100 });
+  const [viewLayout, setViewLayout] = useState<LayoutId>(() => savedLayout(bookId));
+  const changeLayout = (id: LayoutId) => {
+    setViewLayout(id);
+    useReader.getState().view?.setLayout(id);
+    try {
+      localStorage.setItem(`marginalia.pageLayout.${bookId}`, id);
+    } catch {
+      /* ignore */
+    }
+  };
   const [ending, setEnding] = useState<null | { summary: string; done: boolean; error: string | null }>(null);
 
   // ---------- Load book, session, highlights, notes and the PDF ----------
@@ -120,7 +140,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
       if (beacon) navigator.sendBeacon?.("/api/reading", new Blob([JSON.stringify(body)], { type: "application/json" }));
       else void api.reading(bookId, sessionIdLive, body.events).catch(() => {});
     };
-    const t1 = setInterval(tick, 5000);
+    const t1 = setInterval(tick, 1000);
     const t2 = setInterval(() => flush(), 30_000);
     const onHide = () => document.visibilityState === "hidden" && flush(true);
     const onUnload = () => flush(true);
@@ -189,10 +209,10 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
       else if (e.key === "Escape") {
         if (st.findOpen) st.set({ findOpen: false });
         else if (st.ask) st.set({ ask: null });
-      } else if ((e.key === "ArrowRight" || e.key === "PageDown") && st.view && isPageFit(st.view.viewer.currentScaleValue)) {
+      } else if ((e.key === "ArrowRight" || e.key === "PageDown") && st.view && (isPageFit(st.view.viewer.currentScaleValue) || pagedLayout())) {
         e.preventDefault();
         st.view.goTo(st.page + 1);
-      } else if ((e.key === "ArrowLeft" || e.key === "PageUp") && st.view && isPageFit(st.view.viewer.currentScaleValue)) {
+      } else if ((e.key === "ArrowLeft" || e.key === "PageUp") && st.view && (isPageFit(st.view.viewer.currentScaleValue) || pagedLayout())) {
         e.preventDefault();
         st.view.goTo(st.page - 1);
       } else if (e.key === "Home" && st.view) st.view.goTo(0);
@@ -261,64 +281,86 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
   return (
     <div className="reader" style={{ ["--claude-w" as string]: `${layout.claudeWidth}px` }}>
       <header className="topbar reader-bar">
-        <button className="icon-btn" onClick={() => go(session ? { name: "book", bookId } : { name: "library" })} aria-label={session ? "Back to book" : "Back to library"} title={session ? "Book & sessions" : "Library"}>
-          <ArrowLeft size={17} />
-        </button>
-        <button className={`icon-btn${layout.sidebar ? " on" : ""}`} onClick={() => setLayout({ sidebar: !layout.sidebar })} aria-label="Toggle sidebar" aria-pressed={layout.sidebar} title="Contents, pages, highlights, notes ( [ )">
-          <PanelLeft size={17} />
-        </button>
-        <div className="reader-title truncate">
-          <span className="truncate">{book?.title ?? "…"}</span>
-          {(where.section || where.chapter) && <span className="muted truncate reader-where"> · {niceTitle(where.section ?? where.chapter ?? "")}</span>}
-        </div>
-        <span className="spacer" />
-        {book && <PageBox page={page} pageCount={book.pageCount} labels={book.pageLabels} />}
-        <div className="zoom">
-          <button className="icon-btn" aria-label="Zoom out" onClick={() => useReader.getState().view?.zoom(-1)}>
-            <Minus size={15} />
+        <div className="bar-group">
+          <button className="icon-btn" onClick={() => go(session ? { name: "book", bookId } : { name: "library" })} aria-label={session ? "Back to book" : "Back to library"} title={session ? "Book & sessions" : "Library"}>
+            <ArrowLeft size={17} />
           </button>
-          <select
-            className="zoom-select"
-            aria-label="Zoom"
-            value={ZOOM_PRESETS.some((z) => z.value === scale.value) ? scale.value : "custom"}
-            onChange={(e) => useReader.getState().view?.setScale(e.target.value)}
-          >
-            {!ZOOM_PRESETS.some((z) => z.value === scale.value) && <option value="custom">{scale.pct}%</option>}
-            {ZOOM_PRESETS.map((z) => (
-              <option key={z.value} value={z.value}>
-                {z.label}
-              </option>
-            ))}
-          </select>
-          <button className="icon-btn" aria-label="Zoom in" onClick={() => useReader.getState().view?.zoom(1)}>
-            <Plus size={15} />
+          <button className={`icon-btn${layout.sidebar ? " on" : ""}`} onClick={() => setLayout({ sidebar: !layout.sidebar })} aria-label="Toggle sidebar" aria-pressed={layout.sidebar} title="Contents, pages, highlights, notes ( [ )">
+            <PanelLeft size={17} />
           </button>
+          <div className="reader-title">
+            <div className="truncate reader-book" title={book?.title}>
+              {book?.title ?? ""}
+            </div>
+            {(where.section || where.chapter) && <div className="truncate reader-where">{niceTitle(where.section ?? where.chapter ?? "")}</div>}
+          </div>
         </div>
-        <span className="spacer" />
-        {session && <SessionChip readMs={readMs} onEnd={endSession} />}
-        <button className="icon-btn" aria-label="Find in book" title="Find (Ctrl+F)" onClick={() => useReader.getState().set({ findOpen: true })}>
-          <Search size={16} />
-        </button>
-        <Menu
-          label="More"
-          trigger={() => (
-            <button className="icon-btn" aria-label="More">
-              <MoreHorizontal size={17} />
+
+        <div className="bar-group bar-center">
+          {book && <PageBox page={page} pageCount={book.pageCount} labels={book.pageLabels} />}
+          <span className="bar-sep" />
+          <div className="zoom">
+            <button className="icon-btn" aria-label="Zoom out" title="Zoom out (Ctrl −)" onClick={() => useReader.getState().view?.zoom(-1)}>
+              <Minus size={15} />
             </button>
-          )}
-          items={[
-            { label: "Rotate clockwise", onSelect: () => useReader.getState().view?.rotate(90) },
-            { label: "Rotate counter-clockwise", onSelect: () => useReader.getState().view?.rotate(-90) },
-            { label: "Open PDF in a new tab", onSelect: () => window.open(api.fileUrl(bookId), "_blank", "noopener") },
-            "sep",
-            { label: "Book & sessions", onSelect: () => go({ name: "book", bookId }) },
-            { label: "Commands", hint: "Ctrl K", onSelect: () => useApp.getState().setPalette(true) },
-            { label: "Reset layout", onSelect: () => setLayout(DEFAULT_LAYOUT) },
-          ]}
-        />
-        <button className={`icon-btn${layout.claude ? " on" : ""}`} onClick={() => setLayout({ claude: !layout.claude })} aria-label="Toggle Claude" aria-pressed={layout.claude} title="Claude ( ] )">
-          <PanelRight size={17} />
-        </button>
+            <select
+              className="zoom-select"
+              aria-label="Zoom"
+              value={ZOOM_PRESETS.some((z) => z.value === scale.value) ? scale.value : "custom"}
+              onChange={(e) => useReader.getState().view?.setScale(e.target.value)}
+            >
+              {!ZOOM_PRESETS.some((z) => z.value === scale.value) && <option value="custom">{scale.pct}%</option>}
+              {ZOOM_PRESETS.map((z) => (
+                <option key={z.value} value={z.value}>
+                  {z.label}
+                </option>
+              ))}
+            </select>
+            <button className="icon-btn" aria-label="Zoom in" title="Zoom in (Ctrl +)" onClick={() => useReader.getState().view?.zoom(1)}>
+              <Plus size={15} />
+            </button>
+          </div>
+          <span className="bar-sep" />
+          <Menu
+            label="Page layout"
+            align="start"
+            trigger={() => (
+              <button className="icon-btn" aria-label="Page layout" title="Page layout">
+                <Columns2 size={16} />
+              </button>
+            )}
+            items={[
+              ...LAYOUTS.map((l) => ({ label: l.label, checked: viewLayout === l.id, onSelect: () => changeLayout(l.id) })),
+              "sep" as const,
+              { label: "Rotate clockwise", onSelect: () => useReader.getState().view?.rotate(90) },
+              { label: "Rotate counter-clockwise", onSelect: () => useReader.getState().view?.rotate(-90) },
+            ]}
+          />
+        </div>
+
+        <div className="bar-group bar-right">
+          {session && <SessionPill readMs={readMs} onEnd={endSession} />}
+          <button className="icon-btn" aria-label="Find in book" title="Find (Ctrl+F)" onClick={() => useReader.getState().set({ findOpen: true })}>
+            <Search size={16} />
+          </button>
+          <Menu
+            label="More"
+            trigger={() => (
+              <button className="icon-btn" aria-label="More">
+                <MoreHorizontal size={17} />
+              </button>
+            )}
+            items={[
+              { label: "Open PDF in a new tab", onSelect: () => window.open(api.fileUrl(bookId), "_blank", "noopener") },
+              { label: "Book & sessions", onSelect: () => go({ name: "book", bookId }) },
+              { label: "Commands", hint: "Ctrl K", onSelect: () => useApp.getState().setPalette(true) },
+              { label: "Reset layout", onSelect: () => setLayout(DEFAULT_LAYOUT) },
+            ]}
+          />
+          <button className={`icon-btn${layout.claude ? " on" : ""}`} onClick={() => setLayout({ claude: !layout.claude })} aria-label="Toggle Claude" aria-pressed={layout.claude} title="Claude ( ] )">
+            <PanelRight size={17} />
+          </button>
+        </div>
       </header>
 
       <div className={`reader-body${layout.sidebar ? " with-side" : ""}${layout.claude ? " with-claude" : ""}`}>
@@ -354,6 +396,10 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
 }
 
 const isPageFit = (v: string) => v === "page-fit";
+const pagedLayout = () => {
+  const l = useReader.getState().view?.layout;
+  return l === "single" || l === "horizontal";
+};
 
 function PageBox({ page, pageCount, labels }: { page: number; pageCount: number; labels: string[] | null }) {
   const [text, setText] = useState(label(labels, page));
@@ -394,32 +440,115 @@ function PageBox({ page, pageCount, labels }: { page: number; pageCount: number;
   );
 }
 
-function SessionChip({ readMs, onEnd }: { readMs: number; onEnd: () => void }) {
+function clock(ms: number) {
+  const t = Math.floor(ms / 1000);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = t % 60;
+  const two = (n: number) => String(n).padStart(2, "0");
+  return h ? `${h}:${two(m)}:${two(sec)}` : `${m}:${two(sec)}`;
+}
+
+/** The session in the top bar: name and a live study timer; click for details and End. */
+function SessionPill({ readMs, onEnd }: { readMs: number; onEnd: () => void }) {
   const session = useReader((s) => s.session)!;
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
   const total = session.readingMs + readMs;
   const box = session.timeboxMin ? session.timeboxMin * 60_000 : null;
   const over = box != null && total >= box;
+  const ended = session.status !== "open";
   const warned = useRef(false);
   useEffect(() => {
-    if (over && !warned.current) {
+    if (over && !warned.current && !ended) {
       warned.current = true;
-      toast({ text: `Your ${session.timeboxMin}-minute time box is up.`, action: session.status === "open" ? { label: "End session", run: onEnd } : undefined, ms: 15000 });
+      toast({ text: `Your ${session.timeboxMin}-minute time box is up.`, action: { label: "End session", run: onEnd }, ms: 15000 });
     }
-  }, [over, session.timeboxMin, session.status, onEnd]);
+  }, [over, session.timeboxMin, ended, onEnd]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !pop.current?.contains(e.target as Node) && !ref.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  const r = open ? ref.current?.getBoundingClientRect() : undefined;
+  const pct = box ? Math.min(1, total / box) : 0;
   return (
-    <div className={`session-chip${over ? " over" : ""}`} title={session.goal ? `Goal: ${session.goal}` : session.name}>
-      <span className="truncate session-chip-name">{session.name}</span>
-      <span className="muted">
-        {formatDuration(total) || "0 min"}
-        {box ? ` / ${session.timeboxMin} min` : ""}
-      </span>
-      {box && <i className="session-chip-bar" style={{ width: `${Math.min(100, (total / box) * 100)}%` }} />}
-      {session.status === "open" && !session.legacy && (
-        <button className="link small" style={{ marginTop: 0 }} onClick={onEnd}>
-          End
-        </button>
-      )}
-    </div>
+    <>
+      <button ref={ref} className={`session-pill${over ? " over" : ""}${ended ? " ended" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open} title="Session details">
+        {box ? (
+          <svg className="ring" viewBox="0 0 20 20" aria-hidden>
+            <circle cx="10" cy="10" r="8" className="ring-bg" />
+            <circle cx="10" cy="10" r="8" className="ring-fg" strokeDasharray={`${pct * 50.27} 50.27`} transform="rotate(-90 10 10)" />
+          </svg>
+        ) : (
+          <span className={`dot-live${ended ? " off" : ""}`} aria-hidden />
+        )}
+        <span className="truncate session-pill-name">{session.name}</span>
+        <span className="session-pill-time">{clock(total)}</span>
+      </button>
+      {open &&
+        r &&
+        createPortal(
+          <div ref={pop} className="pop session-pop fade" style={{ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) }} role="dialog" aria-label="Session">
+            <EditableText
+              className="session-pop-name"
+              value={session.name}
+              label="Session name"
+              onSave={async (name) => {
+                const s2 = await api.patchSession(session.id, { name }).catch(() => null);
+                if (s2) useReader.setState({ session: { ...session, name: s2.name } });
+              }}
+            />
+            <div className="small muted">
+              {SESSION_TYPE_LABEL[session.type]}
+              {ended ? " · ended" : ""}
+            </div>
+            {session.goal && <div className="session-pop-goal">{session.goal}</div>}
+            <div className="session-pop-stats">
+              <div>
+                <div className="stat-big">{clock(total)}</div>
+                <div className="small muted">studied in this session</div>
+              </div>
+              {box && (
+                <div>
+                  <div className="stat-big">{over ? "Done" : clock(box - total)}</div>
+                  <div className="small muted">left of {session.timeboxMin} min</div>
+                </div>
+              )}
+            </div>
+            {box && (
+              <div className="progress">
+                <i style={{ width: `${pct * 100}%` }} />
+              </div>
+            )}
+            <div className="row" style={{ marginTop: 12 }}>
+              <button className="btn sm ghost" onClick={() => go({ name: "book", bookId: session.bookId })}>
+                All sessions
+              </button>
+              <span className="spacer" />
+              {!ended && !session.legacy && (
+                <button
+                  className="btn sm primary"
+                  onClick={() => {
+                    setOpen(false);
+                    onEnd();
+                  }}
+                >
+                  End session
+                </button>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

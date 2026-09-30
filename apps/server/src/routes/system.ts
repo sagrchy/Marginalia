@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { books, memories, sessions, subjects, usage } from "@marginalia/db";
 import { MODELS, MemoryBody, MemoryPatch, SettingsPatch } from "@marginalia/shared";
-import { getKv, getPlanLimits, getSettings, updateSettings } from "../services/settings";
-import { studyCalendar, studyTotals } from "../services/study";
+import { getKv, getPlanLimits, getSettings, planMeters, updateSettings } from "../services/settings";
+import { studyCalendar, studyDay, studyTotals } from "../services/study";
 import { body, id, must, type Deps } from "./util";
 
 export function systemRoutes({ db, ws, engine, dataDir }: Deps) {
@@ -17,13 +17,16 @@ export function systemRoutes({ db, ws, engine, dataDir }: Deps) {
 
   // ---------- Study time ----------
   app.get("/study", (c) => c.json({ days: studyCalendar(db), totals: studyTotals(db) }));
+  app.get("/study/:day", (c) => c.json(must(studyDay(db, c.req.param("day")), "Use a date like 2026-09-30")));
 
   // ---------- Usage and plan limits ----------
   app.get("/usage", async (c) => {
     const totals = (where: ReturnType<typeof gte>) =>
       db
         .select({
-          inTok: sql<number>`coalesce(sum(${usage.inputTokens} + ${usage.cacheReadTokens} + ${usage.cacheCreationTokens}),0)`,
+          // New input (uncached + written to cache), cache reads (re-sent context, much cheaper) and output, kept apart.
+          inTok: sql<number>`coalesce(sum(${usage.inputTokens} + ${usage.cacheCreationTokens}),0)`,
+          cacheTok: sql<number>`coalesce(sum(${usage.cacheReadTokens}),0)`,
           outTok: sql<number>`coalesce(sum(${usage.outputTokens}),0)`,
           cost: sql<number>`coalesce(sum(${usage.costUsd}),0)`,
           n: sql<number>`count(*)`,
@@ -35,13 +38,16 @@ export function systemRoutes({ db, ws, engine, dataDir }: Deps) {
     today.setHours(0, 0, 0, 0);
     const weekAgo = Date.now() - 7 * 86_400_000;
     const byModel = db
-      .select({ model: usage.model, n: sql<number>`count(*)`, tokens: sql<number>`sum(${usage.inputTokens} + ${usage.cacheReadTokens} + ${usage.cacheCreationTokens} + ${usage.outputTokens})`, cost: sql<number>`sum(${usage.costUsd})` })
+      .select({ model: usage.model, n: sql<number>`count(*)`, tokens: sql<number>`sum(${usage.inputTokens} + ${usage.cacheCreationTokens} + ${usage.outputTokens})`, cached: sql<number>`sum(${usage.cacheReadTokens})`, cost: sql<number>`sum(${usage.costUsd})` })
       .from(usage)
       .where(gte(usage.ts, weekAgo))
       .groupBy(usage.model)
       .all();
     const sessionId = Number(c.req.query("sessionId"));
+    const plan = await engine.planUsage().catch(() => null);
     return c.json({
+      plan: planMeters(plan, getPlanLimits(db)),
+      planLive: plan != null,
       limits: getPlanLimits(db),
       today: totals(gte(usage.ts, today.getTime())),
       week: totals(gte(usage.ts, weekAgo)),

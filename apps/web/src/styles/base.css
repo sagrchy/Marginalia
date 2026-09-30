@@ -326,7 +326,7 @@ a {
   letter-spacing: 0.01em;
   text-decoration: none;
 }
-.page {
+.content {
   max-width: 1080px;
   margin: 0 auto;
   padding: 24px 24px 80px;
@@ -487,4 +487,116 @@ a {
 }
 .page-ref:hover {
   text-decoration-style: solid;
+}
+
+/* pdf.js lays pages out as content-box; the app-wide border-box rule must not reach inside the viewer. */
+.pdfViewer,
+.pdfViewer *,
+.pdfViewer *::before,
+.pdfViewer *::after {
+  box-sizing: content-box;
+}
+
+/* Model & effort picker */
+.model-btn {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  padding: 0 6px;
+}
+.model-pop {
+  position: fixed;
+  z-index: 1000;
+  width: 290px;
+  padding: 12px;
+}
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.model-row:hover,
+.model-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.model-row.on {
+  background: var(--press);
+}
+.model-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.model-row-name {
+  font-weight: 500;
+}
+.effort-seg {
+  display: flex;
+  width: 100%;
+}
+.effort-seg button {
+  flex: 1;
+  padding: 5px 2px;
+  font-size: 12px;
+}
+
+/* Usage meters */
+.usage-meter,
+.meter {
+  display: inline-block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.usage-meter {
+  width: 32px;
+  margin-right: 6px;
+}
+.usage-meter i,
+.meter i {
+  display: block;
+  height: 100%;
+  background: var(--ink-2);
+}
+.meter {
+  display: block;
+  width: 100%;
+  height: 7px;
+  margin: 6px 0 4px;
+}
+.meter.warning i {
+  background: #c98a12;
+}
+.meter.critical i,
+.usage-line.warn .usage-meter i {
+  background: var(--danger);
+}
+.limit-group + .limit-group {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.limit-group {
+  display: grid;
+  gap: 14px;
+}
+.limit-label {
+  font-weight: 500;
+}
+.usage-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 6px;
+  border-bottom: 1px solid var(--line);
 }

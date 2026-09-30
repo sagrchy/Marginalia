@@ -63,6 +63,8 @@ export function applyAppearance(s: Settings) {
   root.dataset.theme = s.appearance.theme;
   root.style.setProperty("--read", `${s.appearance.fontSize}px`);
   root.style.setProperty("--pdf-dim", String(1 - s.appearance.pdfDim / 100));
+  if (s.appearance.pdfDim > 0) root.dataset.dim = "";
+  else delete root.dataset.dim;
   try {
     localStorage.setItem("marginalia.theme", s.appearance.theme);
   } catch {

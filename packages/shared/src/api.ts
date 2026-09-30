@@ -61,7 +61,9 @@ export type ViewState = z.infer<typeof ViewState>;
 export const ChatBody = z.object({
   text: z.string().trim().min(1).max(20000),
   view: ViewState,
-  deep: z.boolean().default(false),
+  /** Model and effort for this message (the chat's picker); settings' defaults when absent. */
+  model: z.string().min(1).max(80).optional(),
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
 });
 export type ChatBody = z.infer<typeof ChatBody>;
 

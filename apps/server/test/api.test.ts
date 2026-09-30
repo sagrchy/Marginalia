@@ -125,6 +125,15 @@ describe("sessions and the AI", () => {
     const s = (await t.req("GET", `/sessions/${sessionId}`)).json.session;
     expect(s.readingMs).toBe(90_000 + 12 * 60_000);
     expect(s.pages).toEqual([1, 2]);
+
+    // The study calendar's day view: what was read, in which session, on which pages.
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const detail = (await t.req("GET", `/study/${day}`)).json;
+    expect(detail.totalMs).toBe(90_000 + 12 * 60_000);
+    expect(detail.books[0]).toMatchObject({ bookId, pageCount: 2, pages: "142–143" }) // printed page numbers;
+    expect(detail.books[0].sessions[0]).toMatchObject({ id: sessionId, ms: 90_000 + 12 * 60_000 });
+    expect((await t.req("GET", "/study/not-a-day")).status).toBe(404);
   });
 
   it("sends a message with the 'where I am' header and streams the reply with tool activity", async () => {
@@ -158,11 +167,21 @@ describe("sessions and the AI", () => {
     expect(fs.readFileSync(t.ws.p(folder, "transcript.md"), "utf8")).toContain("Why does this need a closed interval?");
   });
 
-  it("resumes the same Claude session and uses the deep model when asked", async () => {
-    const r = await t.sse(`/sessions/${sessionId}/chat`, { text: "Go deeper please", view: { visiblePages: [2] }, deep: true });
-    expect(r.events[0]).toMatchObject({ type: "start", model: "claude-opus-5-5" });
+  it("resumes the same Claude session with the model and effort picked in the chat", async () => {
+    const r = await t.sse(`/sessions/${sessionId}/chat`, { text: "Go deeper please", view: { visiblePages: [2] }, model: "claude-opus-5-5", effort: "high" });
+    expect(r.events[0]).toMatchObject({ type: "start", model: "claude-opus-5-5", effort: "high" });
     expect(t.mock.sent.at(-1)!.brief.resume).toBe(true);
-    expect(t.mock.sent.at(-1)!.text).toContain("Go deeper on this one");
+    expect(t.mock.sent.at(-1)).toMatchObject({ model: "claude-opus-5-5", effort: "high" });
+    const msgs = (await t.req("GET", `/sessions/${sessionId}`)).json.messages;
+    expect(msgs.at(-1)).toMatchObject({ role: "assistant", model: "claude-opus-5-5", effort: "high" });
+
+    // Defaults come from settings (Sonnet 5, medium); Haiku has no effort levels; unknown models fall back.
+    const d = await t.sse(`/sessions/${sessionId}/chat`, { text: "hi", view: { visiblePages: [2] } });
+    expect(d.events[0]).toMatchObject({ model: "claude-sonnet-5", effort: "medium" });
+    const h = await t.sse(`/sessions/${sessionId}/chat`, { text: "hi", view: { visiblePages: [2] }, model: "claude-haiku-4-5-20251001", effort: "max" });
+    expect(h.events[0]).toMatchObject({ model: "claude-haiku-4-5-20251001", effort: null });
+    const x = await t.sse(`/sessions/${sessionId}/chat`, { text: "hi", view: { visiblePages: [2] }, model: "not-a-model" });
+    expect(x.events[0]).toMatchObject({ model: "claude-sonnet-5" });
   });
 
   it("memory is only kept after approval", async () => {
@@ -191,8 +210,13 @@ describe("sessions and the AI", () => {
   it("reports plan limits and usage", async () => {
     const u = (await t.req("GET", `/usage?sessionId=${sessionId}`)).json;
     expect(u.limits[0]).toMatchObject({ window: "five_hour", utilization: 0.12 });
+    expect(u.planLive).toBe(true);
+    expect(u.plan[0]).toMatchObject({ kind: "session", label: "Current session (5 hours)", active: true });
+    // Fresher utilization from a reply overrides the cached /usage row.
+    expect(u.plan[0].percent).toBe(12);
     expect(u.session.n).toBeGreaterThanOrEqual(3);
     expect(u.today.inTok).toBeGreaterThan(0);
+    expect(u.today.cacheTok).toBeGreaterThan(0); // cache reads are reported apart from new input
   });
 
   it("ending writes a summary via Claude and proposes a memory", async () => {

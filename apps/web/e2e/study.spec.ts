@@ -45,7 +45,7 @@ test.describe.serial("Marginalia v2", () => {
 
     await expect(page).toHaveURL(/#\/read\/\d+\?session=\d+/);
     await expect(page.locator(".page canvas").first()).toBeVisible();
-    await expect(page.locator(".session-chip")).toContainText("Continuity");
+    await expect(page.locator(".session-pill")).toContainText("Continuity");
     await expect(page.locator(".claude-head")).toContainText("Problem solving");
 
     // Ask; the reply streams with what Claude looked at, and page references are links.
@@ -57,7 +57,27 @@ test.describe.serial("Marginalia v2", () => {
     await expect(reply.locator(".activity")).toContainText("Reading p.");
     await expect(reply.locator(".page-ref").first()).toBeVisible();
     await expect(page.locator(".msg.user").last()).toContainText("What is going on here?");
-    await expect(page.locator(".usage-line")).toBeVisible();
+    await expect(page.locator(".usage-line")).toContainText("Session 12%");
+
+    // Pick the model and effort for the next message, like Claude Code.
+    await page.getByRole("button", { name: /Sonnet 5 · Medium/ }).click();
+    const picker = page.getByRole("dialog", { name: "Model and effort" });
+    await picker.getByRole("radio", { name: /Opus 5\.5/ }).click();
+    await picker.getByRole("radio", { name: "High", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: /Opus 5\.5 · High/ })).toBeVisible();
+    await composer.fill("And the next part?");
+    await composer.press("Enter");
+    await expect(page.locator(".msg.assistant").last().locator(".msg-meta")).toContainText("Opus 5.5 · High", { useInnerText: false });
+
+    // Slash commands run locally and never reach Claude.
+    await composer.fill("/usage");
+    await composer.press("Enter");
+    await expect(page.locator(".notice-card")).toContainText("Current session (5 hours)");
+    await expect(page.locator(".msg.user").last()).not.toContainText("/usage");
+    await composer.fill("/model sonnet");
+    await composer.press("Enter");
+    await expect(page.getByRole("button", { name: /Sonnet 5 · High/ })).toBeVisible();
 
     // Claude may only *suggest* memories; nothing is saved until approved.
     await composer.fill("Please remember that I like examples first");
@@ -136,7 +156,8 @@ test.describe.serial("Marginalia v2", () => {
   test("ending a session writes a summary that shows on the book page", async ({ page }) => {
     await page.goto(`/#/book/${bookId}`);
     await page.getByRole("button", { name: "Continue" }).first().click();
-    await page.getByRole("button", { name: "End", exact: true }).click();
+    await page.locator(".session-pill").click();
+    await page.getByRole("dialog", { name: "Session" }).getByRole("button", { name: "End session" }).click();
     const dialog = page.getByRole("dialog", { name: "Session ended" });
     await expect(dialog).toContainText("Worked through the section on continuity");
     await dialog.getByRole("button", { name: "Back to sessions" }).click();
@@ -153,6 +174,11 @@ test.describe.serial("Marginalia v2", () => {
 
     await page.goto("/#/settings/study");
     await expect(page.locator(".heat .cell").first()).toBeVisible();
+    // Today is selected; its detail lists what was studied, and any day can be picked.
+    await expect(page.locator(".day-detail")).toContainText("Today");
+    await expect(page.locator(".day-detail")).toContainText("Continuity");
+    await page.locator(".heat button.cell").first().click();
+    await expect(page.locator(".day-detail")).toContainText("Nothing studied this day.");
 
     await page.goto("/#/settings/appearance");
     await page.getByRole("button", { name: "Dark" }).click();

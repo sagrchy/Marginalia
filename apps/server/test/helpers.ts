@@ -56,5 +56,5 @@ export function makeApp() {
     db.$client.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
   };
-  return { ...deps, app, db, dataDir, mock: deps.engine as MockEngine, req, upload, sse, cleanup };
+  return { ...deps, app, db, dataDir, mock: deps.engine as unknown as MockEngine, req, upload, sse, cleanup };
 }

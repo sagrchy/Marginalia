@@ -1,4 +1,4 @@
-import type { ActivityKind, ErrorKind, PlanLimit, TurnUsage } from "@marginalia/shared";
+import type { ActivityKind, Effort, ErrorKind, PlanLimit, PlanRow, TurnUsage } from "@marginalia/shared";
 
 /** Everything the engine needs to start (or resume) a Claude session for one study session. */
 export type SessionBrief = {
@@ -7,6 +7,8 @@ export type SessionBrief = {
   resume: boolean;
   systemPrompt: string;
   model: string;
+  /** Reasoning effort; null for models without effort levels. */
+  effort: Effort | null;
   webSearch: boolean;
   /** Most tool calls allowed for one message before the turn is stopped. */
   maxToolCalls: number;
@@ -24,13 +26,15 @@ export type EngineEvent =
 export interface ChatEngine {
   readonly id: string;
   /** Send one message and stream what happens until Claude finishes the turn. */
-  send(brief: SessionBrief, text: string, opts: { model: string }): AsyncGenerator<EngineEvent>;
+  send(brief: SessionBrief, text: string, opts: { model: string; effort: Effort | null }): AsyncGenerator<EngineEvent>;
   interrupt(sessionId: number): Promise<void>;
   /** Close the live process (it can be resumed later). */
   close(sessionId: number): void;
   isLive(sessionId: number): boolean;
   contextUsage(sessionId: number): Promise<{ tokens: number | null; max: number | null; percentage: number } | null>;
   account(): Promise<{ email?: string; subscription?: string } | null>;
+  /** The plan's usage meters (Claude Code's /usage). Null when they can't be fetched. */
+  planUsage(): Promise<{ rows: PlanRow[]; at: number } | null>;
   shutdown(): void;
 }
 

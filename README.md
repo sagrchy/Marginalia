@@ -33,21 +33,25 @@ For development with hot reload, run `pnpm dev`. To click around without using y
 - **Reader.** Built on pdf.js's own viewer component (the one Firefox uses), so it behaves like a browser's PDF viewer:
   - Crisp text, working links (with a "Back to p. N" pill), and Ctrl+F find.
   - Zoom presets, Ctrl + scroll zoom, and rotation.
+  - Page layouts: continuous, single page, two pages (with or without the cover alone), grid and horizontal. The choice is remembered per book.
+  - A session pill in the top bar shows a live study timer (and a ring for the time box). Click it for details, to rename, or to end the session.
   - Printed page numbers (e.g. "xii", "143"), with the PDF number shown alongside.
   - Themes never recolour the page. There is an optional *dim* control instead.
 - **Highlights and notes.** Select text to get a toolbar: five colours, note, ask Claude, copy. Press H to use your last colour. Click a highlight to recolour it, add a note, ask about it or delete it (with undo). The sidebar lists contents, page thumbnails, highlights and notes.
 - **Claude.** The panel beside the page streams answers and shows what Claude looked at ("Reading p. 122"):
   - Page references in answers are clickable.
-  - "Deeper" sends one message to a stronger model. You can stop a reply, and a failed message comes back for a retry.
-  - The panel shows plan-limit and context usage.
+  - Pick the model and effort for each message under the message box (Opus 5.5, Fable 5.1, Sonnet 5, Haiku 4.5; low to max effort). The default is Sonnet 5 at medium, set in Settings.
+  - Slash commands run locally, like in Claude Code: `/usage`, `/context`, `/model`, `/effort`, `/end`, `/help`.
+  - You can stop a reply, and a failed message comes back for a retry.
+  - The panel shows your plan's usage meter (the same numbers as Claude Code's `/usage`) and how full the conversation's context is.
   - Claude can only *suggest* memories. They take effect when you approve them, either in the chat or in Settings → Memory.
 - **Settings:**
-  - **Study time:** a contributions-style calendar, totals, streak and time per book. Idle time and hidden tabs don't count.
-  - **Claude usage:** plan limits, messages and tokens.
+  - **Study time:** a contributions-style calendar, totals, streak and time per book. Click any day (or use the arrow keys) to see what you studied: books, sessions, pages, questions, highlights and notes. Idle time and hidden tabs don't count.
+  - **Claude usage:** the plan's meters with reset times, and Marginalia's own tokens split into new input, cached and output.
   - **Memory**.
   - **Subjects:** name and tutor style.
   - **Appearance:** Paper, Sepia, Soft grey or Dark; text size; page dim.
-  - **Claude:** models, web search, lookups per message.
+  - **Claude:** default model and effort, web search, lookups per message.
 - **Commands.** Ctrl+K opens a palette for everything (go to a book, toggle panels, zoom, theme, end session).
 
 ### Keyboard

@@ -1,5 +1,5 @@
 import { AnnotationEditorType, AnnotationMode, type PDFDocumentProxy } from "pdfjs-dist";
-import { EventBus, FindState, LinkTarget, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
+import { EventBus, FindState, LinkTarget, PDFFindController, PDFLinkService, PDFViewer, ScrollMode, SpreadMode } from "pdfjs-dist/web/pdf_viewer.mjs";
 import "pdfjs-dist/web/pdf_viewer.css";
 import type { PdfRect } from "@marginalia/shared";
 
@@ -15,6 +15,17 @@ export const ZOOM_PRESETS: { value: string; label: string }[] = [
   { value: "2", label: "200%" },
   { value: "3", label: "300%" },
 ];
+
+/** Page layouts, like a browser's PDF viewer offers. */
+export const LAYOUTS = [
+  { id: "continuous", label: "Continuous scroll", scroll: "VERTICAL", spread: "NONE" },
+  { id: "single", label: "Single page", scroll: "PAGE", spread: "NONE" },
+  { id: "two", label: "Two pages", scroll: "VERTICAL", spread: "ODD" },
+  { id: "two-cover", label: "Two pages, cover alone", scroll: "VERTICAL", spread: "EVEN" },
+  { id: "wrapped", label: "Grid", scroll: "WRAPPED", spread: "NONE" },
+  { id: "horizontal", label: "Horizontal scroll", scroll: "HORIZONTAL", spread: "NONE" },
+] as const;
+export type LayoutId = (typeof LAYOUTS)[number]["id"];
 
 export type FindStatus = { state: "found" | "not_found" | "wrapped" | "pending" | null; current: number; total: number };
 
@@ -63,7 +74,7 @@ export class PdfView {
       textLayerMode: 1,
       annotationMode: AnnotationMode.ENABLE_FORMS,
       annotationEditorMode: AnnotationEditorType.DISABLE,
-      removePageBorders: false,
+      removePageBorders: true,
       enableHWA: true,
       maxCanvasPixels: 2 ** 25,
     } as ConstructorParameters<typeof PDFViewer>[0]);
@@ -139,6 +150,19 @@ export class PdfView {
   goToSpot(index: number, rect: PdfRect) {
     this.onNavigate?.();
     this.viewer.scrollPageIntoView({ pageNumber: index + 1, destArray: [null, { name: "XYZ" }, rect[0], Math.max(rect[1], rect[3]) + 40, null] });
+  }
+
+  setLayout(id: LayoutId) {
+    const l = LAYOUTS.find((x) => x.id === id) ?? LAYOUTS[0];
+    const page = this.viewer.currentPageNumber;
+    this.viewer.scrollMode = ScrollMode[l.scroll];
+    this.viewer.spreadMode = SpreadMode[l.spread];
+    this.viewer.currentPageNumber = page;
+  }
+  get layout(): LayoutId {
+    const scroll = Object.entries(ScrollMode).find(([, v]) => v === this.viewer.scrollMode)?.[0];
+    const spread = Object.entries(SpreadMode).find(([, v]) => v === this.viewer.spreadMode)?.[0];
+    return LAYOUTS.find((l) => l.scroll === scroll && l.spread === spread)?.id ?? "continuous";
   }
 
   setScale(value: string) {

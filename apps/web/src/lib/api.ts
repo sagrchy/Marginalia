@@ -1,4 +1,4 @@
-import type { ChatEvent, PlanLimit, Settings, SettingsPatch, SessionType, ViewState, HighlightColor } from "@marginalia/shared";
+import type { ChatEvent, PlanLimit, PlanRow, Settings, SettingsPatch, SessionType, ViewState, HighlightColor } from "@marginalia/shared";
 
 export class ApiError extends Error {
   constructor(
@@ -100,6 +100,7 @@ export type Message = {
   selection: string | null;
   activity: { kind: string; label: string }[];
   model: string | null;
+  effort: string | null;
   status: "ok" | "stopped" | "error";
   createdAt: number;
 };
@@ -130,14 +131,36 @@ export type Highlight = {
   updatedAt: number;
 };
 export type Note = { id: number; bookId: number; sessionId: number | null; pageIndex: number | null; body: string; source: "user" | "ai"; createdAt: number; updatedAt: number };
-export type UsageTotals = { inTok: number; outTok: number; cost: number; n: number };
+/** inTok: new input (incl. cache writes); cacheTok: cache reads (re-sent context); outTok: output incl. thinking. */
+export type UsageTotals = { inTok: number; cacheTok: number; outTok: number; cost: number; n: number };
 export type Usage = {
+  /** The plan's meters (Claude Code's /usage); planLive is false when only reply events were available. */
+  plan: PlanRow[];
+  planLive: boolean;
   limits: PlanLimit[];
   today: UsageTotals;
   week: UsageTotals;
   session: UsageTotals | null;
-  byModel: { model: string; n: number; tokens: number; cost: number }[];
+  byModel: { model: string; n: number; tokens: number; cached: number; cost: number }[];
   account: { email?: string; subscription?: string } | null;
+};
+export type StudyDay = {
+  day: string;
+  totalMs: number;
+  questions: number;
+  first: number | null;
+  last: number | null;
+  books: {
+    bookId: number;
+    title: string;
+    subject: string;
+    ms: number;
+    pageCount: number;
+    pages: string;
+    highlights: number;
+    notes: number;
+    sessions: { id: number; name: string; status: string; ms: number; questions: number }[];
+  }[];
 };
 export type StudyData = {
   days: { day: string; ms: number }[];
@@ -211,6 +234,7 @@ export const api = {
   patchSettings: (p: SettingsPatch) => patch<{ settings: Settings }>("/settings", p),
   usage: (sessionId?: number | null) => get<Usage>(`/usage${sessionId ? `?sessionId=${sessionId}` : ""}`),
   study: () => get<StudyData>("/study"),
+  studyDay: (day: string) => get<StudyDay>(`/study/${day}`),
 };
 
 /** POST and read server-sent events until the stream ends. */

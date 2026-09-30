@@ -187,11 +187,17 @@
 .pdfViewer {
   padding: 10px 0 40px;
 }
-.pdfViewer .page {
-  --page-margin: 8px auto 10px;
+/* Tight, Chrome-like page spacing with a soft edge instead of pdf.js's wide borders. */
+.pdfViewer.removePageBorders .page {
+  margin: 0 auto 8px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.16);
 }
-/* Never invert or recolour the page. Optional dimming lowers brightness only. */
-.pdfViewer .page .canvasWrapper {
+.pdfViewer.removePageBorders .spread .page,
+.pdfViewer.removePageBorders:is(.scrollHorizontal, .scrollWrapped) .page {
+  margin: 0 4px 8px;
+}
+/* Never invert or recolour the page. Optional dimming lowers brightness only (no filter at all when off, to stay crisp). */
+:root[data-dim] .pdfViewer .page .canvasWrapper {
   filter: brightness(var(--pdf-dim, 1));
 }
 .viewer-loading {
@@ -651,6 +657,8 @@
   min-height: 0;
   overflow: auto;
   padding: 14px 16px 20px;
+}
+.claude-inner {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -880,4 +888,193 @@
   .pagebox .muted {
     display: none;
   }
+}
+
+/* ---------- Top bar ---------- */
+.reader-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.bar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.bar-right {
+  justify-content: flex-end;
+}
+.bar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 6px;
+}
+.reader-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-left: 6px;
+  line-height: 1.2;
+}
+.reader-book {
+  font-weight: 500;
+  font-size: 13.5px;
+}
+.reader-title .reader-where {
+  font-size: 12px;
+  color: var(--muted);
+}
+.session-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  min-width: 0;
+  max-width: 280px;
+  margin-right: 4px;
+  font-size: 13px;
+}
+.session-pill:hover {
+  background: var(--hover);
+}
+.session-pill.over {
+  border-color: var(--danger);
+}
+.session-pill-name {
+  font-weight: 500;
+  min-width: 0;
+}
+.session-pill-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  flex: none;
+}
+.dot-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+.dot-live.off {
+  background: var(--faint);
+}
+.ring {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+.ring-bg {
+  stroke: var(--line);
+}
+.ring-fg {
+  stroke: var(--ink-2);
+}
+.session-pill.over .ring-fg {
+  stroke: var(--danger);
+}
+.session-pop {
+  position: fixed;
+  z-index: 900;
+  width: 300px;
+  padding: 14px;
+}
+.session-pop-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+.session-pop-goal {
+  margin-top: 8px;
+  font-family: var(--font-read);
+  font-size: 15px;
+  color: var(--ink-2);
+}
+.session-pop-stats {
+  display: flex;
+  gap: 24px;
+  margin: 12px 0 8px;
+}
+.stat-big {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 1180px) {
+  .reader-title {
+    display: flex;
+  }
+  .reader-title .reader-where {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .reader-bar {
+    display: flex;
+  }
+  .reader-title,
+  .bar-sep {
+    display: none;
+  }
+  .session-pill-name {
+    display: none;
+  }
+}
+.composer {
+  position: relative;
+}
+.cmd-hints {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  z-index: 5;
+}
+.cmd-hint {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--ink);
+}
+.cmd-hint:hover {
+  background: var(--hover);
+}
+.notice-card {
+  position: relative;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+.notice-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+}
+.notice-meter + .notice-meter {
+  margin-top: 6px;
 }

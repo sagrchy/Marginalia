@@ -291,7 +291,7 @@ function Notes() {
             className="textarea"
             rows={4}
             value={draft}
-            placeholder={`Note on p. ${label(book.pageLabels, page)}… (Markdown and $maths$ work)`}
+            aria-label={`Note on p. ${label(book.pageLabels, page)}`}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void add();

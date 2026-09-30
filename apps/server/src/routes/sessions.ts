@@ -13,7 +13,7 @@ export function sessionRoutes({ db, ws, chat, engine }: Deps) {
 
   const withStats = (s: typeof sessions.$inferSelect) => {
     const tok = db
-      .select({ i: sql<number>`coalesce(sum(${usage.inputTokens} + ${usage.cacheReadTokens} + ${usage.cacheCreationTokens}),0)`, o: sql<number>`coalesce(sum(${usage.outputTokens}),0)` })
+      .select({ i: sql<number>`coalesce(sum(${usage.inputTokens} + ${usage.cacheCreationTokens}),0)`, o: sql<number>`coalesce(sum(${usage.outputTokens}),0)` })
       .from(usage)
       .where(eq(usage.sessionId, s.id))
       .get()!;

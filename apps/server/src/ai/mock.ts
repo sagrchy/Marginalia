@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Workspace } from "../workspace";
 import { emptyUsage } from "./agent";
+import type { Effort } from "@marginalia/shared";
 import type { ChatEngine, EngineEvent, SessionBrief } from "./engine";
 
 /**
@@ -11,7 +12,7 @@ import type { ChatEngine, EngineEvent, SessionBrief } from "./engine";
  */
 export class MockEngine implements ChatEngine {
   readonly id = "mock";
-  public sent: { brief: SessionBrief; text: string; model: string }[] = [];
+  public sent: { brief: SessionBrief; text: string; model: string; effort: Effort | null }[] = [];
   private live = new Set<number>();
   private stopping = new Set<number>();
 
@@ -21,8 +22,8 @@ export class MockEngine implements ChatEngine {
     return this.live.has(id);
   }
 
-  async *send(brief: SessionBrief, text: string, opts: { model: string }): AsyncGenerator<EngineEvent> {
-    this.sent.push({ brief, text, model: opts.model });
+  async *send(brief: SessionBrief, text: string, opts: { model: string; effort: Effort | null }): AsyncGenerator<EngineEvent> {
+    this.sent.push({ brief, text, model: opts.model, effort: opts.effort });
     this.live.add(brief.sessionId);
     this.stopping.delete(brief.sessionId);
     const fail = text.match(/\[\[fail:(limit|auth|network)\]\]/);
@@ -78,6 +79,14 @@ export class MockEngine implements ChatEngine {
   async contextUsage(id: number) {
     return this.live.has(id) ? { tokens: 18_000, max: 200_000, percentage: 9 } : null;
   }
+  async planUsage() {
+    const soon = Date.now() + 3 * 3600_000;
+    return { at: Date.now(), rows: [
+      { kind: "session", group: "session", label: "Current session (5 hours)", percent: 12, resetsAt: soon, severity: "normal", active: true },
+      { kind: "weekly_all", group: "weekly", label: "This week, all models", percent: 4, resetsAt: soon + 4 * 86_400_000, severity: "normal", active: false },
+    ] };
+  }
+
   async account() {
     return { email: "student@example.com", subscription: "mock" };
   }

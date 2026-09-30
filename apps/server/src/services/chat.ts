@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { books, memories, messages, sessions, usage, type Db } from "@marginalia/db";
-import { clip, type ChatBody, type ChatEvent } from "@marginalia/shared";
+import { MODELS, clip, effortFor, type ChatBody, type ChatEvent, type Effort } from "@marginalia/shared";
 import { systemPrompt, whereIAm } from "../ai/context";
 import { ERROR_COPY, type ChatEngine, type SessionBrief } from "../ai/engine";
 import type { Workspace } from "../workspace";
@@ -24,14 +24,15 @@ export class ChatService {
     return this.busy.has(sessionId);
   }
 
-  private brief(s: Session): SessionBrief {
+  private brief(s: Session, model: string, effort: Effort | null): SessionBrief {
     const st = getSettings(this.db);
     return {
       sessionId: s.id,
       claudeSessionId: s.claudeSessionId,
       resume: s.claudeStarted,
       systemPrompt: systemPrompt(this.db, s),
-      model: st.model,
+      model,
+      effort,
       webSearch: st.webSearch,
       maxToolCalls: st.maxTurns,
       priorCostUsd: Number(
@@ -62,17 +63,19 @@ export class ChatService {
         .returning()
         .get();
       const st = getSettings(this.db);
-      const model = body.deep ? st.deepModel : st.model;
-      yield { type: "start", userMessageId: userMsg.id, model };
-      const text = `${whereIAm(this.db, s, view)}\n\n${body.deep ? "(Go deeper on this one — take the time to be thorough.)\n\n" : ""}${body.text}`;
-      yield* this.run(s, text, model, { transcriptUser: body.text, userMessageId: userMsg.id });
+      // Only models Claude Code offers here; anything else falls back to the default.
+      const model = body.model && MODELS.some((m) => m.id === body.model) ? body.model : st.model;
+      const effort = effortFor(model, body.effort ?? st.effort);
+      yield { type: "start", userMessageId: userMsg.id, model, effort };
+      const text = `${whereIAm(this.db, s, view)}\n\n${body.text}`;
+      yield* this.run(s, text, model, effort, { transcriptUser: body.text, userMessageId: userMsg.id });
     } finally {
       this.busy.delete(sessionId);
     }
   }
 
   /** Run one turn through the engine and persist the outcome. */
-  private async *run(s: Session, text: string, model: string, opts: { transcriptUser: string; userMessageId?: number }): AsyncGenerator<ChatEvent> {
+  private async *run(s: Session, text: string, model: string, effort: Effort | null, opts: { transcriptUser: string; userMessageId?: number }): AsyncGenerator<ChatEvent> {
     const b = this.db.select().from(books).where(eq(books.id, s.bookId)).get()!;
     let reply = "";
     const activity: { kind: string; label: string }[] = [];
@@ -80,7 +83,7 @@ export class ChatService {
     let sawResult = false;
     this.clearProposed(); // anything left from a crash would be misattributed
     try {
-      for await (const ev of this.engine.send(this.brief(s), text, { model })) {
+      for await (const ev of this.engine.send(this.brief(s, model, effort), text, { model, effort })) {
         if (ev.type === "text") {
           reply += ev.text;
           yield { type: "text", text: ev.text };
@@ -113,7 +116,7 @@ export class ChatService {
     if (reply.trim() || ended) {
       assistantId = this.db
         .insert(messages)
-        .values({ sessionId: s.id, role: "assistant", content: reply.trim() || (outcome.stopped ? "_(stopped)_" : ""), activity, model, status: outcome.ok ? "ok" : outcome.stopped ? "stopped" : "error" })
+        .values({ sessionId: s.id, role: "assistant", content: reply.trim() || (outcome.stopped ? "_(stopped)_" : ""), activity, model, effort, status: outcome.ok ? "ok" : outcome.stopped ? "stopped" : "error" })
         .returning()
         .get().id;
       this.ws.appendTranscript(s.folder, "user", opts.transcriptUser);
@@ -180,7 +183,7 @@ export class ChatService {
       try {
         const st = getSettings(this.db);
         const prompt = `[Session ending] The student is ending this session. Write a short summary to ${s.folder}/summary.md: what was covered (printed pages), what clicked, what is still shaky, open questions, and a concrete next step. Under 200 words, Markdown. If you learned something about the student worth remembering, propose it in memory/proposed/. Then reply with one or two sentences for the student.`;
-        yield* this.run(s, prompt, st.model, { transcriptUser: "(ended the session)" });
+        yield* this.run(s, prompt, st.model, effortFor(st.model, st.effort), { transcriptUser: "(ended the session)" });
       } finally {
         this.busy.delete(sessionId);
       }

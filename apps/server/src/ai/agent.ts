@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { PlanLimit, TurnUsage } from "@marginalia/shared";
+import type { Effort, PlanLimit, PlanRow, TurnUsage } from "@marginalia/shared";
 import type { Workspace } from "../workspace";
 import { AsyncQueue, classifyError, type ChatEngine, type EngineEvent, type SessionBrief } from "./engine";
 import type { Describe } from "./activity";
@@ -15,6 +15,7 @@ type Live = {
   q: Query;
   input: AsyncQueue<SDKUserMessage>;
   model: string;
+  effort: Effort | null;
   /** Events of the turn in progress go here; null between turns. */
   turn: AsyncQueue<EngineEvent> | null;
   toolCalls: number;
@@ -55,6 +56,7 @@ export class AgentEngine implements ChatEngine {
       q: null as unknown as Query,
       input,
       model: brief.model,
+      effort: brief.effort,
       turn: null,
       toolCalls: 0,
       maxToolCalls: brief.maxToolCalls,
@@ -69,6 +71,7 @@ export class AgentEngine implements ChatEngine {
       options: {
         cwd: this.ws.root,
         model: brief.model,
+        ...(brief.effort ? { effort: brief.effort } : {}),
         systemPrompt: brief.systemPrompt,
         tools,
         // Loads the workspace's CLAUDE.md (the hand-off) and .claude/settings.json; never the user's own settings.
@@ -140,16 +143,8 @@ export class AgentEngine implements ChatEngine {
             break;
           }
           case "rate_limit_event": {
-            const i = m.rate_limit_info;
-            const limit: PlanLimit = {
-              window: i.rateLimitType ?? "five_hour",
-              status: i.status,
-              utilization: typeof i.utilization === "number" ? i.utilization : null,
-              resetsAt: i.resetsAt ? (i.resetsAt < 1e12 ? i.resetsAt * 1000 : i.resetsAt) : null,
-              updatedAt: Date.now(),
-            };
             // Between turns there is no listener; the next turn's events carry fresh limits anyway.
-            turn?.push({ type: "limits", limit });
+            for (const limit of limitsFrom(m.rate_limit_info)) turn?.push({ type: "limits", limit });
             break;
           }
           case "result": {
@@ -200,7 +195,7 @@ export class AgentEngine implements ChatEngine {
     }
   }
 
-  async *send(brief: SessionBrief, text: string, opts: { model: string }): AsyncGenerator<EngineEvent> {
+  async *send(brief: SessionBrief, text: string, opts: { model: string; effort: Effort | null }): AsyncGenerator<EngineEvent> {
     let live = this.live.get(brief.sessionId);
     if (live?.dead) {
       this.live.delete(brief.sessionId);
@@ -224,6 +219,14 @@ export class AgentEngine implements ChatEngine {
         live.model = opts.model;
       } catch {
         /* keep the current model */
+      }
+    }
+    if (opts.effort && opts.effort !== live.effort) {
+      try {
+        await live.q.applyFlagSettings({ effortLevel: opts.effort });
+        live.effort = opts.effort;
+      } catch {
+        /* keep the current effort */
       }
     }
     live.input.push({ type: "user", parent_tool_use_id: null, message: { role: "user", content: text } } as SDKUserMessage);
@@ -278,7 +281,53 @@ export class AgentEngine implements ChatEngine {
         /* try the next */
       }
     }
-    return null;
+    return this.acct;
+  }
+
+  private plan: { at: number; rows: PlanRow[] | null } | null = null;
+  private planInflight: Promise<PlanRow[] | null> | null = null;
+  private acct: { email?: string; subscription?: string } | null = null;
+
+  /**
+   * Claude Code's own /usage report: the plan's meters exactly as claude.ai computes them. It's a local
+   * command (no model call), run in a throwaway, non-persisted query. Cached briefly.
+   */
+  async planUsage(): Promise<{ rows: PlanRow[]; at: number } | null> {
+    if (!this.plan || Date.now() - this.plan.at > 60_000) {
+      this.planInflight ??= this.fetchPlan().finally(() => (this.planInflight = null));
+      const rows = await this.planInflight;
+      this.plan = { at: Date.now(), rows };
+    }
+    return this.plan.rows ? { rows: this.plan.rows, at: this.plan.at } : null;
+  }
+
+  private async fetchPlan(): Promise<PlanRow[] | null> {
+    const q = query({
+      prompt: "/usage",
+      options: { cwd: this.ws.root, tools: [], settingSources: [], persistSession: false, env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "marginalia/2.0" } },
+    });
+    const timer = setTimeout(() => q.close(), 20_000);
+    q.accountInfo().then(
+      (a) => (this.acct = { email: a.email, subscription: a.subscriptionType }),
+      () => {},
+    );
+    try {
+      for await (const m of q as AsyncIterable<SDKMessage>) {
+        const report = (m as { usage_report?: { rate_limits?: { limits?: RawRow[] | null } | null } }).usage_report;
+        if (report) return planRows(report.rate_limits?.limits ?? null);
+        if (m.type === "result") return null;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+      try {
+        q.close();
+      } catch {
+        /* closed */
+      }
+    }
   }
 
   shutdown() {
@@ -309,4 +358,57 @@ export function decide(ws: Workspace, tool: string, input: Record<string, unknow
 
 export function emptyUsage(): TurnUsage {
   return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, durationMs: 0, turns: 0 };
+}
+
+type RawRow = {
+  kind: string;
+  group: string;
+  percent: number;
+  resets_at: string | null;
+  scope?: { model?: { display_name: string } | null; surface?: { display_name: string } | null } | null;
+  severity: string;
+  is_active: boolean;
+};
+
+export function planRows(rows: RawRow[] | null): PlanRow[] | null {
+  if (!rows) return null;
+  return rows.map((r) => {
+    const scope = r.scope?.model?.display_name ?? r.scope?.surface?.display_name;
+    const label =
+      r.kind === "session" ? "Current session (5 hours)" : r.kind === "weekly_all" ? "This week, all models" : scope ? `This week, ${scope}` : r.kind.replace(/_/g, " ");
+    return {
+      kind: r.kind,
+      group: r.group,
+      label,
+      percent: Math.round(r.percent),
+      resetsAt: r.resets_at ? Date.parse(r.resets_at) : null,
+      severity: r.severity,
+      active: r.is_active,
+    };
+  });
+}
+
+/** A rate-limit event carries the window that triggered it plus, in `unifiedWindows`, every window's utilization. */
+export function limitsFrom(i: {
+  status: PlanLimit["status"];
+  rateLimitType?: string;
+  utilization?: number;
+  resetsAt?: number;
+  unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number }>;
+}): PlanLimit[] {
+  const ms = (t?: number) => (t ? (t < 1e12 ? t * 1000 : t) : null);
+  const now = Date.now();
+  const out = new Map<string, PlanLimit>();
+  for (const [window, w] of Object.entries(i.unifiedWindows ?? {}))
+    out.set(window, { window, status: "allowed", utilization: typeof w.utilization === "number" ? w.utilization : null, resetsAt: ms(w.resetsAt), updatedAt: now });
+  const main = i.rateLimitType ?? "five_hour";
+  const prev = out.get(main);
+  out.set(main, {
+    window: main,
+    status: i.status,
+    utilization: typeof i.utilization === "number" ? i.utilization : (prev?.utilization ?? null),
+    resetsAt: ms(i.resetsAt) ?? prev?.resetsAt ?? null,
+    updatedAt: now,
+  });
+  return [...out.values()];
 }

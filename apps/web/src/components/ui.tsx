@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { useApp } from "../state/app";
 
 /** A dropdown menu anchored to a trigger. Closes on outside click, Escape, or choosing an item. */
@@ -11,7 +11,7 @@ export function Menu({
   label,
 }: {
   trigger: (open: boolean) => ReactNode;
-  items: ({ label: string; onSelect: () => void; danger?: boolean; hint?: string; disabled?: boolean } | "sep")[];
+  items: ({ label: string; onSelect: () => void; danger?: boolean; hint?: string; disabled?: boolean; checked?: boolean } | "sep")[];
   align?: "start" | "end";
   label: string;
 }) {
@@ -71,7 +71,8 @@ export function Menu({
               ) : (
                 <button
                   key={i}
-                  role="menuitem"
+                  role={it.checked === undefined ? "menuitem" : "menuitemradio"}
+                  aria-checked={it.checked}
                   className={`menu-item${it.danger ? " danger" : ""}`}
                   disabled={it.disabled}
                   onClick={() => {
@@ -81,6 +82,7 @@ export function Menu({
                 >
                   <span>{it.label}</span>
                   {it.hint && <span className="kbd">{it.hint}</span>}
+                  {it.checked && <Check size={14} />}
                 </button>
               ),
             )}

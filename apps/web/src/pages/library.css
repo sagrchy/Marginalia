@@ -289,7 +289,7 @@
   border-color: var(--danger);
 }
 @media (max-width: 720px) {
-  .page {
+  .content {
     padding: 16px;
   }
   .grid {

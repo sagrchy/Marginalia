@@ -55,7 +55,7 @@ export function BookPage({ bookId }: { bookId: number }) {
 
   if (error)
     return (
-      <div className="page">
+      <div className="content">
         <div className="error-box">{error}</div>
       </div>
     );
@@ -77,7 +77,7 @@ export function BookPage({ bookId }: { bookId: number }) {
         </button>
       </header>
 
-      <main className="page">
+      <main className="content">
         <section className="book-hero">
           <Cover book={book} size="lg" />
           <div className="book-hero-body">
@@ -90,16 +90,17 @@ export function BookPage({ bookId }: { bookId: number }) {
                 await load();
               }}
             />
-            <EditableText
-              className="book-hero-author"
-              value={book.author ?? ""}
-              placeholder="Add author"
-              label="Author"
-              onSave={async (author) => {
-                await api.patchBook(book.id, { author: author || null }).catch(toastError);
-                await load();
-              }}
-            />
+            {book.author && (
+              <EditableText
+                className="book-hero-author"
+                value={book.author}
+                label="Author"
+                onSave={async (author) => {
+                  await api.patchBook(book.id, { author: author || null }).catch(toastError);
+                  await load();
+                }}
+              />
+            )}
             <div className="row small muted" style={{ flexWrap: "wrap", marginTop: 8 }}>
               <select
                 className="select subject-select"
@@ -127,21 +128,18 @@ export function BookPage({ bookId }: { bookId: number }) {
 
         {starting && <StartSession book={book} count={sessions.length} onClose={() => setStarting(false)} />}
 
-        <section>
-          <div className="row" style={{ marginBottom: 10 }}>
-            <h2 className="section-title">Open sessions</h2>
-          </div>
-          {open.length === 0 && !starting && (
-            <button className="drop-hint" onClick={() => setStarting(true)}>
-              No open session. Start one to study with Claude — give it a goal and Claude will keep it in mind.
-            </button>
-          )}
-          <div className="sessions">
-            {open.map((s) => (
-              <SessionCard key={s.id} s={s} book={book} ending={ending === s.id} onEnd={() => end(s)} onDelete={() => setDeleting(s)} onChange={load} />
-            ))}
-          </div>
-        </section>
+        {open.length > 0 && (
+          <section>
+            <h2 className="section-title" style={{ marginBottom: 10 }}>
+              Open sessions
+            </h2>
+            <div className="sessions">
+              {open.map((s) => (
+                <SessionCard key={s.id} s={s} book={book} ending={ending === s.id} onEnd={() => end(s)} onDelete={() => setDeleting(s)} onChange={load} />
+              ))}
+            </div>
+          </section>
+        )}
 
         {earlier.length > 0 && (
           <section style={{ marginTop: 28 }}>
@@ -282,7 +280,7 @@ function StartSession({ book, count, onClose }: { book: BookDetail; count: numbe
           <label className="label" htmlFor="s-goal">
             Goal <span className="muted">(optional — Claude keeps it in mind)</span>
           </label>
-          <input id="s-goal" className="input" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="e.g. understand the proof of Theorem 1" />
+          <input id="s-goal" className="input" value={goal} onChange={(e) => setGoal(e.target.value)} />
         </div>
       </div>
       <div className="row" style={{ flexWrap: "wrap", gap: 16 }}>

@@ -72,6 +72,8 @@ export function Viewer({ startPage, onScale }: { startPage: number; onScale: (va
     let ready = false;
     const v = new PdfView(container.current, inner.current, {
       onReady: () => {
+        const lay = localStorage.getItem(`marginalia.pageLayout.${bookNow.id}`);
+        if (lay && lay !== "continuous") v.setLayout(lay as Parameters<typeof v.setLayout>[0]);
         v.setScale(localStorage.getItem(`marginalia.zoom.${bookNow.id}`) ?? "auto");
         v.goTo(startPage);
         // Until the view has really settled on the start page, ignore page changes, so a
@@ -433,7 +435,7 @@ function HighlightPopover() {
           <textarea
             className="textarea hl-note"
             rows={4}
-            placeholder="Your note…"
+            aria-label="Note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             onBlur={() => {

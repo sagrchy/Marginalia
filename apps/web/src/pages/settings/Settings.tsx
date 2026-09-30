@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
-import { MODELS, THEMES, THEME_LABEL, WINDOW_LABEL } from "@marginalia/shared";
-import { api, type Memory, type StudyData, type Subject, type Usage } from "../../lib/api";
-import { clockTime, formatDuration, fmtTokens, relTime } from "../../lib/format";
+import { EFFORTS, EFFORT_LABEL, MODELS, THEMES, THEME_LABEL, modelInfo } from "@marginalia/shared";
+import { api, type Memory, type StudyData, type StudyDay, type Subject, type Usage } from "../../lib/api";
+import { ymd } from "@marginalia/shared";
+import { clockTime, formatDuration, fmtTokens, relTime, resetText } from "../../lib/format";
 import { go } from "../../lib/router";
 import { toast, toastError, useApp } from "../../state/app";
 import { Dialog, Switch } from "../../components/ui";
@@ -55,6 +56,7 @@ export function SettingsPage({ tab }: { tab: string }) {
 // ---------- Study time: a year of reading, GitHub-style ----------
 function Study() {
   const [data, setData] = useState<StudyData | null>(null);
+  const [day, setDay] = useState(() => ymd(new Date()));
   useEffect(() => {
     api.study().then(setData, toastError);
   }, []);
@@ -78,8 +80,9 @@ function Study() {
             {formatDuration(data.days.reduce((n, d) => n + d.ms, 0)) || "No time"} in the last year · {activeDays} active day{activeDays === 1 ? "" : "s"}
           </span>
         </div>
-        <Heatmap days={data.days} />
+        <Heatmap days={data.days} selected={day} onSelect={setDay} />
       </section>
+      <DayDetail day={day} />
       {t.perBook.length > 0 && (
         <section style={{ marginTop: 26 }}>
           <h2 className="section-title">By book</h2>
@@ -98,6 +101,77 @@ function Study() {
         </section>
       )}
     </>
+  );
+}
+
+/** What was studied on the selected day. */
+function DayDetail({ day }: { day: string }) {
+  const [d, setD] = useState<StudyDay | null>(null);
+  useEffect(() => {
+    let live = true;
+    setD(null);
+    api.studyDay(day).then((x) => live && setD(x), toastError);
+    return () => {
+      live = false;
+    };
+  }, [day]);
+  const date = new Date(`${day}T00:00:00`);
+  const title = date.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+  return (
+    <section className="day-detail" aria-live="polite">
+      <div className="row" style={{ alignItems: "baseline", flexWrap: "wrap" }}>
+        <h2 className="h2">{day === ymd(new Date()) ? `Today · ${title}` : title}</h2>
+        <span className="spacer" />
+        {d && d.totalMs > 0 && (
+          <span className="small muted">
+            {formatDuration(d.totalMs)}
+            {d.first && d.last ? ` · ${clockTime(d.first)}–${clockTime(d.last)}` : ""}
+            {d.questions ? ` · ${d.questions} question${d.questions === 1 ? "" : "s"} to Claude` : ""}
+          </span>
+        )}
+      </div>
+      {!d ? (
+        <div className="small muted">Loading…</div>
+      ) : d.books.length === 0 ? (
+        <div className="small muted day-empty">Nothing studied this day.</div>
+      ) : (
+        <div className="day-books">
+          {d.books.map((b) => (
+            <div key={b.bookId} className="day-book">
+              <div className="row" style={{ gap: 10 }}>
+                <button className="day-book-title truncate" onClick={() => go({ name: "book", bookId: b.bookId })}>
+                  {b.title}
+                </button>
+                <span className="spacer" />
+                <span className="small">{b.ms ? formatDuration(b.ms) : ""}</span>
+              </div>
+              <div className="small muted">
+                {[
+                  b.subject,
+                  b.pageCount ? `${b.pageCount === 1 ? "p." : "pp."} ${b.pages}` : null,
+                  b.highlights ? `${b.highlights} highlight${b.highlights === 1 ? "" : "s"}` : null,
+                  b.notes ? `${b.notes} note${b.notes === 1 ? "" : "s"}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+              {b.sessions.length > 0 && (
+                <div className="day-sessions">
+                  {b.sessions.map((s) => (
+                    <button key={s.id} className="day-session" onClick={() => go({ name: "read", bookId: b.bookId, sessionId: s.id, page: null })}>
+                      <span className="truncate">{s.name}</span>
+                      <span className="small muted">
+                        {[s.ms ? formatDuration(s.ms) : null, s.questions ? `${s.questions} question${s.questions === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ")}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -129,7 +203,7 @@ function level(ms: number) {
 const CELL = 12;
 const GAP = 3;
 
-function Heatmap({ days }: { days: { day: string; ms: number }[] }) {
+function Heatmap({ days, selected, onSelect }: { days: { day: string; ms: number }[]; selected: string; onSelect: (d: string) => void }) {
   // Columns are weeks starting Monday. As many recent weeks as fit are shown, newest on the right.
   const ref = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState(53);
@@ -179,7 +253,29 @@ function Heatmap({ days }: { days: { day: string; ms: number }[] }) {
             const pos = { gridColumn: i + 2, gridRow: j + 2 };
             if (!c) return <span key={`${i}-${j}`} className="cell empty" style={pos} />;
             const date = new Date(`${c.day}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
-            return <span key={`${i}-${j}`} className={`cell l${level(c.ms)}`} style={pos} title={`${c.ms >= 60_000 ? formatDuration(c.ms) : "No study"} · ${date}`} />;
+            const on = c.day === selected;
+            return (
+              <button
+                key={`${i}-${j}`}
+                className={`cell l${level(c.ms)}${on ? " on" : ""}`}
+                style={pos}
+                data-day={c.day}
+                tabIndex={on ? 0 : -1}
+                aria-pressed={on}
+                aria-label={`${date}: ${c.ms >= 60_000 ? formatDuration(c.ms) : "no study"}`}
+                title={`${c.ms >= 60_000 ? formatDuration(c.ms) : "No study"} · ${date}`}
+                onClick={() => onSelect(c.day)}
+                onKeyDown={(e) => {
+                  const step = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 }[e.key];
+                  if (!step) return;
+                  e.preventDefault();
+                  const idx = days.findIndex((x) => x.day === c.day) + step;
+                  const next = days[Math.max(0, Math.min(days.length - 1, idx))];
+                  onSelect(next.day);
+                  setTimeout(() => (e.currentTarget.closest(".heat")?.querySelector(`[data-day="${next.day}"]`) as HTMLElement | null)?.focus(), 0);
+                }}
+              />
+            );
           }),
         )}
       </div>
@@ -197,72 +293,113 @@ function Heatmap({ days }: { days: { day: string; ms: number }[] }) {
 // ---------- Claude usage ----------
 function UsagePanel() {
   const [u, setU] = useState<Usage | null>(null);
+  const load = () => api.usage().then(setU, toastError);
   useEffect(() => {
-    api.usage().then(setU, toastError);
+    void load();
   }, []);
   if (!u) return <div className="empty">Loading…</div>;
+  const groups = [...new Set(u.plan.map((r) => r.group))];
   return (
     <>
-      <h1 className="h1">Claude usage</h1>
+      <div className="row">
+        <h1 className="h1">Claude usage</h1>
+        <span className="spacer" />
+        <button className="btn sm ghost" onClick={() => void load()}>
+          Refresh
+        </button>
+      </div>
       <p className="muted small">
-        Marginalia uses Claude Code with your Claude subscription{u.account?.subscription ? ` (${u.account.subscription})` : ""}
-        {u.account?.email ? ` — signed in as ${u.account.email}` : ""}. Studying counts toward the same limits as Claude Code and claude.ai.
+        {u.account?.subscription ? `${u.account.subscription} plan` : "Your Claude subscription"}
+        {u.account?.email ? ` · ${u.account.email}` : ""}. Studying counts toward the same limits as Claude Code and claude.ai.
       </p>
+
       <section className="card pad">
-        <h2 className="section-title">Plan limits</h2>
-        {u.limits.length === 0 ? (
-          <p className="muted small">Shown after your first message to Claude.</p>
+        {u.plan.length === 0 ? (
+          <p className="muted small" style={{ margin: 0 }}>
+            Plan usage appears here once Claude Code can reach your account.
+          </p>
         ) : (
           <div className="limits">
-            {u.limits.map((l) => (
-              <div key={l.window} className="limit">
-                <div className="row small">
-                  <span>{WINDOW_LABEL[l.window] ?? l.window}</span>
-                  <span className="spacer" />
-                  <span className={l.status === "allowed" ? "muted" : "danger"}>
-                    {l.utilization != null ? `${Math.round(l.utilization * 100)}% used` : l.status === "rejected" ? "Reached" : l.status === "allowed_warning" ? "Getting close" : "OK"}
-                  </span>
-                </div>
-                {(l.utilization != null || l.status === "rejected") && (
-                  <div className="progress" style={{ marginTop: 5 }}>
-                    <i style={{ width: `${Math.round((l.utilization ?? 1) * 100)}%` }} />
-                  </div>
-                )}
-                {l.resetsAt && (
-                  <div className="small muted" style={{ marginTop: 4 }}>
-                    Resets {new Date(l.resetsAt).toDateString() === new Date().toDateString() ? `at ${clockTime(l.resetsAt)}` : new Date(l.resetsAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}
-                  </div>
-                )}
+            {groups.map((g) => (
+              <div key={g} className="limit-group">
+                {u.plan
+                  .filter((r) => r.group === g)
+                  .map((r) => (
+                    <div key={`${r.kind}-${r.label}`} className="limit">
+                      <div className="row small">
+                        <span className="limit-label">{r.label}</span>
+                        <span className="spacer" />
+                        <span className={r.severity === "normal" ? "" : "danger"}>{r.percent}% used</span>
+                      </div>
+                      <div className={`meter ${r.severity}`}>
+                        <i style={{ width: `${Math.min(100, r.percent)}%` }} />
+                      </div>
+                      {r.resetsAt && <div className="small muted">Resets {resetText(r.resetsAt)}</div>}
+                    </div>
+                  ))}
               </div>
             ))}
-            <div className="small muted">Updated {relTime(Math.max(...u.limits.map((l) => l.updatedAt)))}</div>
+            {!u.planLive && <div className="small muted">From your latest reply; Claude Code's full report wasn't available.</div>}
           </div>
         )}
       </section>
-      <div className="stats" style={{ marginTop: 16 }}>
-        <Stat label="Messages today" value={String(u.today.n)} />
-        <Stat label="Tokens today" value={fmtTokens(u.today.inTok + u.today.outTok)} />
-        <Stat label="Messages this week" value={String(u.week.n)} />
-        <Stat label="Tokens this week" value={fmtTokens(u.week.inTok + u.week.outTok)} />
-      </div>
+
+      <h2 className="section-title" style={{ marginTop: 24 }}>
+        Marginalia's share
+      </h2>
+      <p className="small muted" style={{ marginTop: 4 }}>
+        Tokens from studying here. <b>Cached</b> is earlier conversation and book context Claude re-reads from cache on each reply; it's much cheaper than new input.
+      </p>
+      <table className="table small usage-table">
+        <thead>
+          <tr>
+            <th />
+            <th>Messages</th>
+            <th>New input</th>
+            <th>Cached</th>
+            <th>Output</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(
+            [
+              ["Today", u.today],
+              ["Last 7 days", u.week],
+            ] as const
+          ).map(([name, t]) => (
+            <tr key={name}>
+              <td>{name}</td>
+              <td>{t.n}</td>
+              <td>{fmtTokens(t.inTok)}</td>
+              <td className="muted">{fmtTokens(t.cacheTok)}</td>
+              <td>{fmtTokens(t.outTok)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
       {u.byModel.length > 0 && (
-        <section style={{ marginTop: 22 }}>
-          <h2 className="section-title">This week by model</h2>
-          <table className="table small">
-            <tbody>
-              {u.byModel.map((m) => (
-                <tr key={m.model}>
-                  <td>{MODELS.find((x) => x.id === m.model)?.label ?? m.model}</td>
-                  <td>{m.n} messages</td>
-                  <td>{fmtTokens(m.tokens)} tokens</td>
-                  <td className="muted" title="What this would cost at API prices — your subscription covers it">
-                    ≈ ${m.cost.toFixed(2)} API-equivalent
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+        <table className="table small usage-table" style={{ marginTop: 16 }}>
+          <thead>
+            <tr>
+              <th>Last 7 days by model</th>
+              <th>Messages</th>
+              <th>Tokens</th>
+              <th>Cached</th>
+              <th title="What this would cost at API prices; your subscription covers it">API equivalent</th>
+            </tr>
+          </thead>
+          <tbody>
+            {u.byModel.map((m) => (
+              <tr key={m.model}>
+                <td>{modelInfo(m.model).label}</td>
+                <td>{m.n}</td>
+                <td>{fmtTokens(m.tokens)}</td>
+                <td className="muted">{fmtTokens(m.cached)}</td>
+                <td className="muted">${m.cost.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </>
   );
@@ -416,7 +553,7 @@ function AddMemory({ subjects, onClose, onDone }: { subjects: Subject[]; onClose
           onClose();
         }}
       >
-        <textarea className="textarea" rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. I prefer geometric intuition before formal proofs." aria-label="Memory" />
+        <textarea className="textarea" rows={3} value={text} onChange={(e) => setText(e.target.value)} aria-label="Memory" />
         <div className="field" style={{ marginTop: 10 }}>
           <label className="label" htmlFor="mem-subject">
             Applies to
@@ -640,8 +777,8 @@ function ClaudeSettings() {
       </p>
       <section className="set-row">
         <div>
-          <div className="set-label">Model</div>
-          <div className="small muted">Used for every message.</div>
+          <div className="set-label">Default model</div>
+          <div className="small muted">What new chats start with. You can switch model for any message from the picker under the message box.</div>
         </div>
         <select className="select" style={{ width: 260 }} value={settings.model} onChange={(e) => void save({ model: e.target.value }).catch(toastError)} aria-label="Model">
           {MODELS.map((m) => (
@@ -653,16 +790,16 @@ function ClaudeSettings() {
       </section>
       <section className="set-row">
         <div>
-          <div className="set-label">“Deeper” model</div>
-          <div className="small muted">Used when you turn on Deeper for a message.</div>
+          <div className="set-label">Default effort</div>
+          <div className="small muted">How long Claude thinks before answering. Higher is more thorough and uses more of your plan.</div>
         </div>
-        <select className="select" style={{ width: 260 }} value={settings.deepModel} onChange={(e) => void save({ deepModel: e.target.value }).catch(toastError)} aria-label="Deeper model">
-          {MODELS.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
+        <div className="seg sm" role="radiogroup" aria-label="Default effort">
+          {EFFORTS.map((e) => (
+            <button key={e} role="radio" aria-checked={settings.effort === e} className={settings.effort === e ? "on" : ""} onClick={() => void save({ effort: e }).catch(toastError)}>
+              {EFFORT_LABEL[e]}
+            </button>
           ))}
-        </select>
+        </div>
       </section>
       <section className="set-row">
         <div>

@@ -126,6 +126,7 @@ export const messages = sqliteTable(
     /** For assistant messages: what Claude did (searched, read pages, web). */
     activity: text("activity", { mode: "json" }).$type<{ kind: string; label: string }[]>().notNull().default(sql`'[]'`),
     model: text("model"),
+    effort: text("effort"),
     /** ok | stopped | error */
     status: text("status").notNull().default("ok"),
     createdAt: integer("created_at").notNull().default(now),

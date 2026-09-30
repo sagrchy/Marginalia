@@ -63,3 +63,10 @@ export function niceTitle(s: string): string {
     .map((w, i) => (i > 0 && small.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
     .join("");
 }
+
+/** "at 4:20 PM" today, otherwise "Mon 11:30 PM". */
+export function resetText(t: number) {
+  const d = new Date(t);
+  const today = new Date();
+  return d.toDateString() === today.toDateString() ? `at ${clockTime(t)}` : d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+}

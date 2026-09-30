@@ -90,8 +90,11 @@ export function Library() {
         <span className="spacer" />
         <label className="search">
           <Search size={15} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search books" aria-label="Search books" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search books" />
         </label>
+        <button className="btn ghost" onClick={() => setAddingSubject(true)}>
+          <Plus size={15} /> Add subject
+        </button>
         <button className="btn primary" onClick={() => pick()}>
           <FileUp size={15} /> Import PDF
         </button>
@@ -114,7 +117,7 @@ export function Library() {
         </button>
       </header>
 
-      <main className="page">
+      <main className="content">
         {error && <div className="error-box">{error}</div>}
         {!books && !error && <div className="empty">Loading your library…</div>}
 
@@ -170,6 +173,9 @@ export function Library() {
                     {list.length} book{list.length === 1 ? "" : "s"}
                   </span>
                   <span className="spacer" />
+                  <button className="btn sm ghost" onClick={() => pick(s.id)} title={`Import a PDF into ${s.name}`}>
+                    <FileUp size={14} /> Import
+                  </button>
                   <Menu
                     label={`${s.name} options`}
                     trigger={() => (
@@ -178,7 +184,6 @@ export function Library() {
                       </button>
                     )}
                     items={[
-                      { label: "Import into this subject…", onSelect: () => pick(s.id) },
                       { label: "Tutor style…", onSelect: () => go({ name: "settings", tab: `subjects` }) },
                       "sep",
                       {
@@ -197,11 +202,7 @@ export function Library() {
                     ]}
                   />
                 </div>
-                {list.length === 0 ? (
-                  <button className="drop-hint" onClick={() => pick(s.id)}>
-                    Drop a PDF here or click to import into {s.name}
-                  </button>
-                ) : (
+                {list.length === 0 ? null : (
                   <div className="grid">
                     {list.map((b) => (
                       <BookCard key={b.id} b={b} onMove={() => setMoveBook(b)} onDelete={() => setDeleteBook(b)} onRenamed={load} />
@@ -212,11 +213,6 @@ export function Library() {
             );
           })}
 
-        {books && !q && (
-          <button className="btn ghost add-subject" onClick={() => setAddingSubject(true)}>
-            <Plus size={15} /> Add subject
-          </button>
-        )}
       </main>
 
       {dragging && (
@@ -537,8 +533,7 @@ function AddSubjectDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
           <label className="label" htmlFor="new-subject">
             Name
           </label>
-          <input id="new-subject" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Linear algebra" />
-          <p className="hint">You can set how the tutor teaches this subject in Settings → Subjects.</p>
+          <input id="new-subject" className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="row" style={{ justifyContent: "flex-end" }}>
           <button type="button" className="btn" onClick={onClose}>
