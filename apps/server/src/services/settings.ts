@@ -12,7 +12,14 @@ export function setKv(db: Db, key: string, value: unknown) {
 }
 
 export function getSettings(db: Db): Settings {
-  const r = Settings.safeParse(getKv(db, "app", {}));
+  const raw = getKv<Record<string, unknown>>(db, "app", {});
+  // Before models followed Claude Code, the default was pinned to Sonnet 5; move that default to the "sonnet" alias.
+  if (raw.model === "claude-sonnet-5" && !getKv(db, "modelsFollowClaudeCode", false)) {
+    raw.model = "sonnet";
+    setKv(db, "app", raw);
+    setKv(db, "modelsFollowClaudeCode", true);
+  }
+  const r = Settings.safeParse(raw);
   return r.success ? r.data : DEFAULT_SETTINGS;
 }
 

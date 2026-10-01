@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Settings, SettingsPatch } from "@marginalia/shared";
+import { FALLBACK_MODELS, type ModelOption, type Settings, type SettingsPatch } from "@marginalia/shared";
 import { api, type SettingsInfo, type Subject } from "../lib/api";
 
 export type Toast = { id: number; text: string; kind?: "info" | "error"; action?: { label: string; run: () => void }; ms?: number };
@@ -7,6 +7,9 @@ export type Toast = { id: number; text: string; kind?: "info" | "error"; action?
 type AppState = {
   info: SettingsInfo | null;
   settings: Settings | null;
+  /** The models Claude Code offers (follows Claude Code updates). */
+  models: ModelOption[];
+  loadModels: () => Promise<void>;
   subjects: Subject[];
   toasts: Toast[];
   paletteOpen: boolean;
@@ -26,10 +29,16 @@ export const useApp = create<AppState>((set, get) => ({
   subjects: [],
   toasts: [],
   paletteOpen: false,
+  models: FALLBACK_MODELS,
+  loadModels: async () => {
+    const models = await api.models().catch(() => null);
+    if (models?.length) set({ models });
+  },
   load: async () => {
     const [info, subjects] = await Promise.all([api.settings(), api.subjects()]);
     set({ info, settings: info.settings, subjects });
     applyAppearance(info.settings);
+    void get().loadModels(); // asks Claude Code; can take a few seconds the first time
   },
   save: async (p) => {
     const cur = get().settings;

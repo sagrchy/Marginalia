@@ -7,6 +7,7 @@ import { go } from "../lib/router";
 import { toast, toastError, useApp } from "../state/app";
 import { Dialog, EditableText, Menu } from "../components/ui";
 import { Markdown } from "../components/Markdown";
+import { SessionDetails } from "../components/SessionDetails";
 import { Cover } from "./Library";
 import "./book.css";
 
@@ -318,6 +319,7 @@ function StartSession({ book, count, onClose }: { book: BookDetail; count: numbe
 
 function SessionCard({ s, book, ending, onEnd, onDelete, onChange }: { s: Session; book: BookDetail; ending: boolean; onEnd: () => void; onDelete: () => void; onChange: () => void }) {
   const [showSummary, setShowSummary] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [editGoal, setEditGoal] = useState(false);
   const pages = useMemo(() => {
     if (!s.pages.length) return null;
@@ -380,12 +382,16 @@ function SessionCard({ s, book, ending, onEnd, onDelete, onChange }: { s: Sessio
       </div>
       {s.goal && <div className="session-goal">Goal: {s.goal}</div>}
       <div className="muted small row" style={{ flexWrap: "wrap", gap: "2px 12px", marginTop: 4 }}>
-        <span>{relTime(s.lastActiveAt)}</span>
+        <span title={new Date(s.lastActiveAt).toLocaleString()}>{relTime(s.lastActiveAt)}</span>
         {s.readingMs > 0 && <span>{formatDuration(s.readingMs)} reading</span>}
         {pages && <span>{pages}</span>}
-        {s.messageCount > 0 && <span>{s.messageCount} messages</span>}
-        {s.timeboxMin && <span>{s.timeboxMin} min box</span>}
+        {s.questions > 0 && <span>{s.questions} question{s.questions === 1 ? "" : "s"}</span>}
+        {s.highlightCount > 0 && <span>{s.highlightCount} highlight{s.highlightCount === 1 ? "" : "s"}</span>}
+        <button className="link small" style={{ marginTop: 0 }} onClick={() => setShowDetails((v) => !v)} aria-expanded={showDetails}>
+          {showDetails ? "Hide details" : "Details"}
+        </button>
       </div>
+      {showDetails && <SessionDetails s={s} labels={book.pageLabels} onSection={(p) => go({ name: "read", bookId: book.id, sessionId: s.id, page: p })} />}
       {s.summary && (
         <div className="session-summary">
           <div className={showSummary ? "" : "clamp"}>

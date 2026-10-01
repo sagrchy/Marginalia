@@ -141,7 +141,7 @@ export function studyDay(db: Db, day: string) {
 }
 
 /** [3,4,5,9] → "4–6, 10" in printed page numbers. */
-function labelRanges(pages: number[], labels: string[] | null): string {
+export function labelRanges(pages: number[], labels: string[] | null): string {
   const out: string[] = [];
   for (let i = 0; i < pages.length; ) {
     let j = i;

@@ -986,7 +986,9 @@
 .session-pop {
   position: fixed;
   z-index: 900;
-  width: 300px;
+  width: 360px;
+  max-height: calc(100vh - 70px);
+  overflow: auto;
   padding: 14px;
 }
 .session-pop-name {

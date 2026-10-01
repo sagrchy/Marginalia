@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Workspace } from "../workspace";
 import { emptyUsage } from "./agent";
-import type { Effort } from "@marginalia/shared";
+import { FALLBACK_MODELS, type Effort } from "@marginalia/shared";
 import type { ChatEngine, EngineEvent, SessionBrief } from "./engine";
 
 /**
@@ -79,6 +79,13 @@ export class MockEngine implements ChatEngine {
   async contextUsage(id: number) {
     return this.live.has(id) ? { tokens: 18_000, max: 200_000, percentage: 9 } : null;
   }
+  async models() {
+    return FALLBACK_MODELS;
+  }
+  runtime() {
+    return { executable: null, version: "mock" };
+  }
+
   async planUsage() {
     const soon = Date.now() + 3 * 3600_000;
     return { at: Date.now(), rows: [

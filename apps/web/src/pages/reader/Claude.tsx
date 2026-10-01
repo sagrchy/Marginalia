@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, Check, ChevronRight, Loader2, MoreHorizontal, Pencil, RotateCcw, Square, X } from "lucide-react";
-import { EFFORTS, EFFORT_LABEL, MODELS, SESSION_TYPE_LABEL, effortFor, modelInfo, type ChatEvent, type PlanRow } from "@marginalia/shared";
+import { EFFORTS, EFFORT_LABEL, SESSION_TYPE_LABEL, effortFor, modelInfo, type ChatEvent, type PlanRow } from "@marginalia/shared";
 import { api, streamEvents, type Memory, type Message, type Session, type Usage } from "../../lib/api";
 import { clockTime, fmtTokens, label, niceTitle, resetText, sectionFor } from "../../lib/format";
 import { go } from "../../lib/router";
@@ -164,17 +164,24 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
       }
       case "model": {
         if (!arg) return window.dispatchEvent(new Event("marginalia:model-picker"));
-        const m = MODELS.find((x) => x.label.toLowerCase().includes(arg) || x.id.includes(arg));
-        if (!m) return notice({ kind: "text", text: `No model matches “${arg}”. Try ${MODELS.map((x) => x.label).join(", ")}.` });
-        setChoice({ model: m.id, effort: choice.effort });
-        return notice({ kind: "text", text: `Next messages use ${choiceLabel(m.id, effortFor(m.id, choice.effort))}.` });
+        const models = useApp.getState().models;
+        // "opus" picks the latest Opus; "sonnet 5" or "claude-sonnet-5" a pinned one.
+        const m =
+          models.find((x) => x.value === arg || x.model === arg) ??
+          models.find((x) => x.label.toLowerCase() === arg) ??
+          models.find((x) => x.latest && x.label.toLowerCase().startsWith(arg)) ??
+          models.find((x) => x.label.toLowerCase().includes(arg));
+        if (!m) return notice({ kind: "text", text: `No model matches “${arg}”. Try ${models.filter((x) => x.latest).map((x) => x.label).join(", ")}.` });
+        setChoice({ model: m.value, effort: choice.effort });
+        return notice({ kind: "text", text: `Next messages use ${choiceLabel(m.value, effortFor(m.value, choice.effort, models))}.` });
       }
       case "effort": {
         const e = EFFORTS.find((x) => x === arg || EFFORT_LABEL[x].toLowerCase() === arg);
         if (!e) return notice({ kind: "text", text: `Effort can be ${EFFORTS.join(", ")}.` });
         setChoice({ model: choice.model, effort: e });
-        const used = effortFor(choice.model, e);
-        return notice({ kind: "text", text: used ? `Next messages use ${choiceLabel(choice.model, used)}.` : `${modelInfo(choice.model).label} doesn't use effort levels.` });
+        const models = useApp.getState().models;
+        const used = effortFor(choice.model, e, models);
+        return notice({ kind: "text", text: used ? `Next messages use ${choiceLabel(choice.model, used)}.` : `${modelInfo(choice.model, models).label} doesn't use effort levels.` });
       }
       case "end":
         return onEnd();

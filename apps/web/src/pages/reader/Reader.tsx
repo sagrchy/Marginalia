@@ -10,6 +10,7 @@ import { streamEvents } from "../../lib/api";
 import { toast, useApp } from "../../state/app";
 import { Dialog, EditableText, Menu } from "../../components/ui";
 import { Markdown } from "../../components/Markdown";
+import { SessionDetails } from "../../components/SessionDetails";
 import { useRegisterCommands, type Command } from "../../components/Palette";
 import { ClaudePanel } from "./Claude";
 import { Sidebar } from "./Sidebar";
@@ -468,6 +469,14 @@ function SessionPill({ readMs, onEnd }: { readMs: number; onEnd: () => void }) {
   }, [over, session.timeboxMin, ended, onEnd]);
   useEffect(() => {
     if (!open) return;
+    // Fresh counts (pages, questions, sections…). Reading time stays as loaded: the live timer adds to it.
+    void api.session(session.id).then(
+      (d) => {
+        const cur = useReader.getState().session;
+        if (cur?.id === d.session.id) useReader.setState({ session: { ...d.session, readingMs: cur.readingMs } });
+      },
+      () => {},
+    );
     const close = (e: MouseEvent) => !pop.current?.contains(e.target as Node) && !ref.current?.contains(e.target as Node) && setOpen(false);
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     window.addEventListener("mousedown", close);
@@ -528,6 +537,7 @@ function SessionPill({ readMs, onEnd }: { readMs: number; onEnd: () => void }) {
                 <i style={{ width: `${pct * 100}%` }} />
               </div>
             )}
+            <SessionDetails s={session} labels={useReader.getState().book?.pageLabels ?? null} liveMs={readMs} compact onSection={(p) => useReader.getState().jump(p)} />
             <div className="row" style={{ marginTop: 12 }}>
               <button className="btn sm ghost" onClick={() => go({ name: "book", bookId: session.bookId })}>
                 All sessions

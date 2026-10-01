@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { limitsFrom, planRows } from "../src/ai/agent";
+import { limitsFrom, planRows, toModelOptions } from "../src/ai/agent";
 import { planMeters } from "../src/services/settings";
 
 describe("plan usage", () => {
@@ -36,5 +36,30 @@ describe("plan usage", () => {
     const older = [{ ...newer[0], updatedAt: 500 }];
     expect(planMeters(plan, older)[0].percent).toBe(40);
     expect(planMeters(null, newer)[0]).toMatchObject({ kind: "session", percent: 50 });
+  });
+});
+
+describe("models follow Claude Code", () => {
+  it("turns supportedModels() into latest-per-family options, then older pinned versions", () => {
+    // As reported by Claude Code 2.1.287.
+    const raw = [
+      ["default", "claude-sonnet-5-5", "Default (recommended)", "Sonnet 5.5 · Efficient for routine tasks", ["low", "medium", "high", "xhigh", "max"]],
+      ["opus", "claude-opus-5-5", "Opus 5.5", "Best for everyday, complex tasks", ["low", "medium", "high", "xhigh", "max"]],
+      ["sonnet", "claude-sonnet-5-5", "Sonnet 5.5", "Efficient for routine tasks", ["low", "medium", "high", "xhigh", "max"]],
+      ["fable", "claude-fable-5-1", "Fable 5.1", "Most capable", ["low", "medium", "high", "xhigh", "max"]],
+      ["haiku", "claude-haiku-4-5-20251001", "Haiku 4.5", "Fastest for quick answers", null],
+      ["claude-sonnet-5", "claude-sonnet-5", "Sonnet 5", "Efficient for routine tasks", ["low", "medium", "high", "xhigh", "max"]],
+      ["claude-opus-5-5", "claude-opus-5-5", "Opus 5.5", "duplicate of the alias", ["low"]],
+    ].map(([value, resolvedModel, displayName, description, supportedEffortLevels]) => ({ value, resolvedModel, displayName, description, supportedEffortLevels }) as never);
+    const opts = toModelOptions(raw);
+    expect(opts.map((o) => [o.value, o.label, o.latest])).toEqual([
+      ["opus", "Opus 5.5", true],
+      ["sonnet", "Sonnet 5.5", true],
+      ["fable", "Fable 5.1", true],
+      ["haiku", "Haiku 4.5", true],
+      ["claude-sonnet-5", "Sonnet 5", false],
+    ]);
+    expect(opts.find((o) => o.recommended)?.value).toBe("sonnet");
+    expect(opts.find((o) => o.value === "haiku")?.efforts).toEqual([]);
   });
 });

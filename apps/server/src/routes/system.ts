@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { books, memories, sessions, subjects, usage } from "@marginalia/db";
-import { MODELS, MemoryBody, MemoryPatch, SettingsPatch } from "@marginalia/shared";
+import { MemoryBody, MemoryPatch, SettingsPatch } from "@marginalia/shared";
 import { getKv, getPlanLimits, getSettings, planMeters, updateSettings } from "../services/settings";
 import { studyCalendar, studyDay, studyTotals } from "../services/study";
 import { body, id, must, type Deps } from "./util";
@@ -11,7 +11,11 @@ export function systemRoutes({ db, ws, engine, dataDir }: Deps) {
 
   app.get("/health", (c) => c.json({ ok: true, engine: engine.id }));
 
-  app.get("/settings", (c) => c.json({ settings: getSettings(db), models: MODELS, dataDir, workspace: ws.root, engine: engine.id, legacy: getKv(db, "legacyImported", null) }));
+  app.get("/settings", (c) =>
+    c.json({ settings: getSettings(db), dataDir, workspace: ws.root, engine: engine.id, claude: engine.runtime(), legacy: getKv(db, "legacyImported", null) }),
+  );
+  /** The models Claude Code offers right now (follows Claude Code updates). */
+  app.get("/models", async (c) => c.json(await engine.models()));
 
   app.patch("/settings", async (c) => c.json({ settings: updateSettings(db, await body(c, SettingsPatch)) }));
 

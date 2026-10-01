@@ -28,6 +28,7 @@ For development with hot reload, run `pnpm dev`. To click around without using y
 - **Book page.** This page lists the book's sessions:
   - Start a new session with a name (defaulted from the current chapter), an optional goal, a kind (first read, problem solving or review) and an optional time box.
   - Open sessions can be continued or ended. Ended sessions can be reopened and show Claude's summary.
+  - "Details" on a session shows when it ran, reading time, pages and sections covered (with time per section), questions, highlights, notes, memory suggestions, the models used and tokens.
   - Each session has a "Copy terminal command" to continue the same conversation in Claude Code.
   - Book details let you fix the contents, the page numbering and the file.
 - **Reader.** Built on pdf.js's own viewer component (the one Firefox uses), so it behaves like a browser's PDF viewer:
@@ -40,7 +41,7 @@ For development with hot reload, run `pnpm dev`. To click around without using y
 - **Highlights and notes.** Select text to get a toolbar: five colours, note, ask Claude, copy. Press H to use your last colour. Click a highlight to recolour it, add a note, ask about it or delete it (with undo). The sidebar lists contents, page thumbnails, highlights and notes.
 - **Claude.** The panel beside the page streams answers and shows what Claude looked at ("Reading p. 122"):
   - Page references in answers are clickable.
-  - Pick the model and effort for each message under the message box (Opus 5.5, Fable 5.1, Sonnet 5, Haiku 4.5; low to max effort). The default is Sonnet 5 at medium, set in Settings.
+  - Pick the model and effort for each message under the message box. The list is Claude Code's own: the latest Opus, Sonnet, Fable and Haiku follow Claude Code updates, and older versions are under "More models". The default is the latest Sonnet at medium effort, set in Settings.
   - Slash commands run locally, like in Claude Code: `/usage`, `/context`, `/model`, `/effort`, `/end`, `/help`.
   - You can stop a reply, and a failed message comes back for a retry.
   - The panel shows your plan's usage meter (the same numbers as Claude Code's `/usage`) and how full the conversation's context is.
@@ -69,6 +70,8 @@ For development with hot reload, run `pnpm dev`. To click around without using y
 | Esc | Close find, clear the selection chip, close popovers |
 
 ## How Claude is used
+
+Marginalia runs **your installed Claude Code** (`claude` on your PATH, or set `MARGINALIA_CLAUDE_PATH`), so updating Claude Code brings its new models and fixes; restart Marginalia after updating. Without one it falls back to the copy bundled with the SDK.
 
 Each session is a Claude Code conversation (`query()` from the Agent SDK) that runs in a *study workspace* at `<data>/workspace`:
 

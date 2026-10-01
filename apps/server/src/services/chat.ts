@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { books, memories, messages, sessions, usage, type Db } from "@marginalia/db";
-import { MODELS, clip, effortFor, type ChatBody, type ChatEvent, type Effort } from "@marginalia/shared";
+import { clip, effortFor, findModel, type ChatBody, type ChatEvent, type Effort } from "@marginalia/shared";
 import { systemPrompt, whereIAm } from "../ai/context";
 import { ERROR_COPY, type ChatEngine, type SessionBrief } from "../ai/engine";
 import type { Workspace } from "../workspace";
@@ -63,19 +63,21 @@ export class ChatService {
         .returning()
         .get();
       const st = getSettings(this.db);
-      // Only models Claude Code offers here; anything else falls back to the default.
-      const model = body.model && MODELS.some((m) => m.id === body.model) ? body.model : st.model;
-      const effort = effortFor(model, body.effort ?? st.effort);
-      yield { type: "start", userMessageId: userMsg.id, model, effort };
+      // Only models Claude Code offers; anything else falls back to the default.
+      const models = await this.engine.models();
+      const option = (body.model && findModel(body.model, models)) || findModel(st.model, models) || models.find((m) => m.recommended) || models[0];
+      const effort = effortFor(option.value, body.effort ?? st.effort, models);
+      yield { type: "start", userMessageId: userMsg.id, model: option.model, effort };
       const text = `${whereIAm(this.db, s, view)}\n\n${body.text}`;
-      yield* this.run(s, text, model, effort, { transcriptUser: body.text, userMessageId: userMsg.id });
+      yield* this.run(s, text, { value: option.value, resolved: option.model }, effort, { transcriptUser: body.text, userMessageId: userMsg.id });
     } finally {
       this.busy.delete(sessionId);
     }
   }
 
   /** Run one turn through the engine and persist the outcome. */
-  private async *run(s: Session, text: string, model: string, effort: Effort | null, opts: { transcriptUser: string; userMessageId?: number }): AsyncGenerator<ChatEvent> {
+  /** model.value goes to Claude Code (an alias follows updates); model.resolved is what's recorded. */
+  private async *run(s: Session, text: string, model: { value: string; resolved: string }, effort: Effort | null, opts: { transcriptUser: string; userMessageId?: number }): AsyncGenerator<ChatEvent> {
     const b = this.db.select().from(books).where(eq(books.id, s.bookId)).get()!;
     let reply = "";
     const activity: { kind: string; label: string }[] = [];
@@ -83,7 +85,7 @@ export class ChatService {
     let sawResult = false;
     this.clearProposed(); // anything left from a crash would be misattributed
     try {
-      for await (const ev of this.engine.send(this.brief(s, model, effort), text, { model, effort })) {
+      for await (const ev of this.engine.send(this.brief(s, model.value, effort), text, { model: model.value, effort })) {
         if (ev.type === "text") {
           reply += ev.text;
           yield { type: "text", text: ev.text };
@@ -100,7 +102,7 @@ export class ChatService {
           outcome = ev;
           this.db
             .insert(usage)
-            .values({ sessionId: s.id, model, ...ev.usage, ok: ev.ok, error: ev.error ? `${ev.error.kind}: ${ev.error.message}`.slice(0, 500) : null })
+            .values({ sessionId: s.id, model: model.resolved, ...ev.usage, ok: ev.ok, error: ev.error ? `${ev.error.kind}: ${ev.error.message}`.slice(0, 500) : null })
             .run();
           yield { type: "usage", usage: ev.usage };
         }
@@ -116,7 +118,7 @@ export class ChatService {
     if (reply.trim() || ended) {
       assistantId = this.db
         .insert(messages)
-        .values({ sessionId: s.id, role: "assistant", content: reply.trim() || (outcome.stopped ? "_(stopped)_" : ""), activity, model, effort, status: outcome.ok ? "ok" : outcome.stopped ? "stopped" : "error" })
+        .values({ sessionId: s.id, role: "assistant", content: reply.trim() || (outcome.stopped ? "_(stopped)_" : ""), activity, model: model.resolved, effort, status: outcome.ok ? "ok" : outcome.stopped ? "stopped" : "error" })
         .returning()
         .get().id;
       this.ws.appendTranscript(s.folder, "user", opts.transcriptUser);
@@ -183,7 +185,9 @@ export class ChatService {
       try {
         const st = getSettings(this.db);
         const prompt = `[Session ending] The student is ending this session. Write a short summary to ${s.folder}/summary.md: what was covered (printed pages), what clicked, what is still shaky, open questions, and a concrete next step. Under 200 words, Markdown. If you learned something about the student worth remembering, propose it in memory/proposed/. Then reply with one or two sentences for the student.`;
-        yield* this.run(s, prompt, st.model, effortFor(st.model, st.effort), { transcriptUser: "(ended the session)" });
+        const models = await this.engine.models();
+        const option = findModel(st.model, models) ?? models[0];
+        yield* this.run(s, prompt, { value: option.value, resolved: option.model }, effortFor(option.value, st.effort, models), { transcriptUser: "(ended the session)" });
       } finally {
         this.busy.delete(sessionId);
       }

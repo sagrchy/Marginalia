@@ -125,6 +125,8 @@ describe("sessions and the AI", () => {
     const s = (await t.req("GET", `/sessions/${sessionId}`)).json.session;
     expect(s.readingMs).toBe(90_000 + 12 * 60_000);
     expect(s.pages).toEqual([1, 2]);
+    expect(s).toMatchObject({ pagesRead: "142–143", questions: 0, highlightCount: 0, noteCount: 0, tokenDetail: { input: 0, cached: 0, output: 0 } });
+    expect(s.sections.reduce((n: number, x: { ms: number }) => n + x.ms, 0)).toBe(90_000 + 12 * 60_000);
 
     // The study calendar's day view: what was read, in which session, on which pages.
     const d = new Date();
@@ -159,7 +161,7 @@ describe("sessions and the AI", () => {
     expect(sent.brief.systemPrompt).toContain("Goal: finish 7.2 exercises");
     expect(sent.brief.systemPrompt).toContain("prefer hints and questions over answers");
     expect(sent.brief.resume).toBe(false);
-    expect(sent.model).toBe("claude-sonnet-5");
+    expect(sent.model).toBe("sonnet");
     const msgs = t.db.select().from(messages).where(eq(messages.sessionId, sessionId)).all();
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(msgs[1].activity[0].label).toBe("Reading p. 143");
@@ -168,20 +170,22 @@ describe("sessions and the AI", () => {
   });
 
   it("resumes the same Claude session with the model and effort picked in the chat", async () => {
-    const r = await t.sse(`/sessions/${sessionId}/chat`, { text: "Go deeper please", view: { visiblePages: [2] }, model: "claude-opus-5-5", effort: "high" });
+    const r = await t.sse(`/sessions/${sessionId}/chat`, { text: "Go deeper please", view: { visiblePages: [2] }, model: "opus", effort: "high" });
     expect(r.events[0]).toMatchObject({ type: "start", model: "claude-opus-5-5", effort: "high" });
     expect(t.mock.sent.at(-1)!.brief.resume).toBe(true);
-    expect(t.mock.sent.at(-1)).toMatchObject({ model: "claude-opus-5-5", effort: "high" });
+    // Claude Code gets the alias (so it follows updates); the record keeps the exact model.
+    expect(t.mock.sent.at(-1)).toMatchObject({ model: "opus", effort: "high" });
     const msgs = (await t.req("GET", `/sessions/${sessionId}`)).json.messages;
     expect(msgs.at(-1)).toMatchObject({ role: "assistant", model: "claude-opus-5-5", effort: "high" });
 
-    // Defaults come from settings (Sonnet 5, medium); Haiku has no effort levels; unknown models fall back.
+    // Defaults come from settings (the latest Sonnet, medium); Haiku has no effort levels; unknown models fall back.
     const d = await t.sse(`/sessions/${sessionId}/chat`, { text: "hi", view: { visiblePages: [2] } });
-    expect(d.events[0]).toMatchObject({ model: "claude-sonnet-5", effort: "medium" });
-    const h = await t.sse(`/sessions/${sessionId}/chat`, { text: "hi", view: { visiblePages: [2] }, model: "claude-haiku-4-5-20251001", effort: "max" });
+    expect(d.events[0]).toMatchObject({ model: "claude-sonnet-5-5", effort: "medium" });
+    const h = await t.sse(`/sessions/${sessionId}/chat`, { text: "hi", view: { visiblePages: [2] }, model: "haiku", effort: "max" });
     expect(h.events[0]).toMatchObject({ model: "claude-haiku-4-5-20251001", effort: null });
     const x = await t.sse(`/sessions/${sessionId}/chat`, { text: "hi", view: { visiblePages: [2] }, model: "not-a-model" });
-    expect(x.events[0]).toMatchObject({ model: "claude-sonnet-5" });
+    expect(x.events[0]).toMatchObject({ model: "claude-sonnet-5-5" });
+    expect((await t.req("GET", "/models")).json.map((m: { value: string }) => m.value)).toEqual(["opus", "sonnet", "fable", "haiku"]);
   });
 
   it("memory is only kept after approval", async () => {
@@ -286,7 +290,7 @@ describe("highlights, notes, study time", () => {
 
   it("settings round-trip and validation", async () => {
     const r = await t.req("PATCH", "/settings", { appearance: { theme: "sepia" }, webSearch: false });
-    expect(r.json.settings).toMatchObject({ webSearch: false, appearance: { theme: "sepia", fontSize: 16, pdfDim: 0 }, model: "claude-sonnet-5" });
+    expect(r.json.settings).toMatchObject({ webSearch: false, appearance: { theme: "sepia", fontSize: 16, pdfDim: 0 }, model: "sonnet" });
     expect((await t.req("PATCH", "/settings", { appearance: { theme: "neon" } })).status).toBe(400);
   });
 });

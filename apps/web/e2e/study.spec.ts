@@ -60,7 +60,7 @@ test.describe.serial("Marginalia v2", () => {
     await expect(page.locator(".usage-line")).toContainText("Session 12%");
 
     // Pick the model and effort for the next message, like Claude Code.
-    await page.getByRole("button", { name: /Sonnet 5 · Medium/ }).click();
+    await page.getByRole("button", { name: /Sonnet 5.5 · Medium/ }).click();
     const picker = page.getByRole("dialog", { name: "Model and effort" });
     await picker.getByRole("radio", { name: /Opus 5\.5/ }).click();
     await picker.getByRole("radio", { name: "High", exact: true }).click();
@@ -77,7 +77,7 @@ test.describe.serial("Marginalia v2", () => {
     await expect(page.locator(".msg.user").last()).not.toContainText("/usage");
     await composer.fill("/model sonnet");
     await composer.press("Enter");
-    await expect(page.getByRole("button", { name: /Sonnet 5 · High/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Sonnet 5.5 · High/ })).toBeVisible();
 
     // Claude may only *suggest* memories; nothing is saved until approved.
     await composer.fill("Please remember that I like examples first");
@@ -165,6 +165,11 @@ test.describe.serial("Marginalia v2", () => {
     await expect(s).toContainText("Reopen");
     await s.getByRole("button", { name: "Show summary" }).click();
     await expect(s).toContainText("Next time");
+    await s.getByRole("button", { name: "Details" }).click();
+    const details = s.locator(".session-details");
+    await expect(details).toContainText("Reading time");
+    await expect(details).toContainText(/\d+ questions/);
+    await expect(details).toContainText("Opus 5.5 · High");
   });
 
   test("settings: memory, study calendar, themes", async ({ page }) => {

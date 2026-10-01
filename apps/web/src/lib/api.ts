@@ -1,4 +1,4 @@
-import type { ChatEvent, PlanLimit, PlanRow, Settings, SettingsPatch, SessionType, ViewState, HighlightColor } from "@marginalia/shared";
+import type { ChatEvent, ModelOption, PlanLimit, PlanRow, Settings, SettingsPatch, SessionType, ViewState, HighlightColor } from "@marginalia/shared";
 
 export class ApiError extends Error {
   constructor(
@@ -90,6 +90,16 @@ export type Session = {
   tokens: number;
   live: boolean;
   resumeCommand: string | null;
+  /** Printed page ranges read in this session, e.g. "142–150, 160". */
+  pagesRead: string;
+  /** Time per chapter/section, in reading order. */
+  sections: { title: string; ms: number; pageIndex: number }[];
+  questions: number;
+  highlightCount: number;
+  noteCount: number;
+  memories: { suggested: number; saved: number };
+  models: { model: string; effort: string | null; replies: number }[];
+  tokenDetail: { input: number; cached: number; output: number };
 };
 export type Message = {
   id: number;
@@ -168,8 +178,9 @@ export type StudyData = {
 };
 export type SettingsInfo = {
   settings: Settings;
-  models: { id: string; label: string; note: string }[];
   dataDir: string;
+  /** The Claude Code that runs sessions: the student's own install, or null for the SDK's bundled copy. */
+  claude: { executable: string | null; version: string | null };
   workspace: string;
   engine: string;
   legacy: { at: number; books: number; sessions: number } | null;
@@ -231,6 +242,7 @@ export const api = {
   deleteMemory: (id: number) => del(`/memories/${id}`),
 
   settings: () => get<SettingsInfo>("/settings"),
+  models: () => get<ModelOption[]>("/models"),
   patchSettings: (p: SettingsPatch) => patch<{ settings: Settings }>("/settings", p),
   usage: (sessionId?: number | null) => get<Usage>(`/usage${sessionId ? `?sessionId=${sessionId}` : ""}`),
   study: () => get<StudyData>("/study"),

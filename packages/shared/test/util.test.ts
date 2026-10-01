@@ -27,7 +27,7 @@ describe("shared utilities", () => {
   });
 
   it("defaults to Sonnet 5 at medium effort and fits effort to the model", () => {
-    expect(Settings.parse({})).toMatchObject({ model: "claude-sonnet-5", effort: "medium" });
+    expect(Settings.parse({})).toMatchObject({ model: "sonnet", effort: "medium" });
     expect(effortFor("claude-opus-5-5", "max")).toBe("max");
     expect(effortFor("claude-haiku-4-5-20251001", "high")).toBeNull();
     expect(effortFor("claude-sonnet-5", null)).toBe("medium");

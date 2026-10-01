@@ -1,28 +1,80 @@
 import crypto from "node:crypto";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { asc, desc, eq, sql } from "drizzle-orm";
-import { books, memories, messages, sessions, usage } from "@marginalia/db";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { books, highlights, memories, messages, notes, readingEvents, sessions, usage } from "@marginalia/db";
 import { ChatBody, SessionBody, SessionPatch, slugify, type ChatEvent } from "@marginalia/shared";
 import { folderStamp } from "../services/legacy";
-import { sessionPages, sessionReadingMs } from "../services/study";
+import { labelRanges, sessionPages, sessionReadingMs } from "../services/study";
 import { HttpError, body, id, must, type Deps } from "./util";
 
 export function sessionRoutes({ db, ws, chat, engine }: Deps) {
   const app = new Hono();
 
+  const count = (table: typeof highlights | typeof notes, sessionId: number) =>
+    Number(db.select({ n: sql<number>`count(*)` }).from(table).where(eq(table.sessionId, sessionId)).get()!.n);
+
   const withStats = (s: typeof sessions.$inferSelect) => {
     const tok = db
-      .select({ i: sql<number>`coalesce(sum(${usage.inputTokens} + ${usage.cacheCreationTokens}),0)`, o: sql<number>`coalesce(sum(${usage.outputTokens}),0)` })
+      .select({
+        i: sql<number>`coalesce(sum(${usage.inputTokens} + ${usage.cacheCreationTokens}),0)`,
+        c: sql<number>`coalesce(sum(${usage.cacheReadTokens}),0)`,
+        o: sql<number>`coalesce(sum(${usage.outputTokens}),0)`,
+      })
       .from(usage)
       .where(eq(usage.sessionId, s.id))
       .get()!;
+    const b = db.select({ labels: books.pageLabels, chapters: books.chapters }).from(books).where(eq(books.id, s.bookId)).get();
+    const pages = sessionPages(db, s.id);
+    // Time per section, in the order they were first read.
+    const perPage = db
+      .select({ p: readingEvents.pageIndex, ms: sql<number>`sum(${readingEvents.dwellMs})`, first: sql<number>`min(${readingEvents.ts})` })
+      .from(readingEvents)
+      .where(eq(readingEvents.sessionId, s.id))
+      .groupBy(readingEvents.pageIndex)
+      .all();
+    const sections = new Map<string, { title: string; ms: number; first: number; pageIndex: number }>();
+    for (const r of perPage) {
+      const ch = [...(b?.chapters ?? [])].reverse().find((c) => c.level <= 1 && c.pageIndex <= r.p);
+      const title = ch?.title ?? "Before the first chapter";
+      const cur = sections.get(title) ?? { title, ms: 0, first: Number(r.first), pageIndex: ch?.pageIndex ?? 0 };
+      cur.ms += Number(r.ms);
+      cur.first = Math.min(cur.first, Number(r.first));
+      sections.set(title, cur);
+    }
+    const models = db
+      .select({ model: messages.model, effort: messages.effort, n: sql<number>`count(*)` })
+      .from(messages)
+      .where(and(eq(messages.sessionId, s.id), eq(messages.role, "assistant")))
+      .groupBy(messages.model, messages.effort)
+      .all()
+      .filter((m) => m.model);
+    const msgCounts = db
+      .select({ role: messages.role, n: sql<number>`count(*)` })
+      .from(messages)
+      .where(eq(messages.sessionId, s.id))
+      .groupBy(messages.role)
+      .all();
+    const mem = db
+      .select({ status: memories.status, n: sql<number>`count(*)` })
+      .from(memories)
+      .where(eq(memories.sessionId, s.id))
+      .groupBy(memories.status)
+      .all();
     return {
       ...s,
       readingMs: sessionReadingMs(db, s.id),
-      pages: sessionPages(db, s.id),
-      messageCount: Number(db.select({ n: sql<number>`count(*)` }).from(messages).where(eq(messages.sessionId, s.id)).get()!.n),
+      pages,
+      pagesRead: labelRanges(pages, b?.labels ?? null),
+      sections: [...sections.values()].sort((x, y) => x.first - y.first).map(({ title, ms, pageIndex }) => ({ title, ms, pageIndex })),
+      messageCount: msgCounts.reduce((n, m) => n + Number(m.n), 0),
+      questions: Number(msgCounts.find((m) => m.role === "user")?.n ?? 0),
+      highlightCount: count(highlights, s.id),
+      noteCount: count(notes, s.id),
+      memories: { suggested: mem.reduce((n, m) => n + Number(m.n), 0), saved: Number(mem.find((m) => m.status === "approved")?.n ?? 0) },
+      models: models.map((m) => ({ model: m.model!, effort: m.effort, replies: Number(m.n) })),
       tokens: Number(tok.i) + Number(tok.o),
+      tokenDetail: { input: Number(tok.i), cached: Number(tok.c), output: Number(tok.o) },
       live: engine.isLive(s.id),
       resumeCommand: s.legacy ? null : `cd "${ws.root}" && claude --resume ${s.claudeSessionId}`,
     };
@@ -113,4 +165,5 @@ export function sessionRoutes({ db, ws, chat, engine }: Deps) {
 
   return app;
 }
+
 

@@ -600,3 +600,99 @@ a {
   padding: 6px;
   border-bottom: 1px solid var(--line);
 }
+.more-models {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.more-models .rot-90 {
+  transform: rotate(-90deg);
+}
+.model-pop {
+  max-height: min(560px, 80vh);
+  overflow: auto;
+}
+.badge {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  vertical-align: 1px;
+}
+
+/* Session details (book page and the reader's session popover) */
+.session-details {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+}
+.sd-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.sd-grid dt {
+  color: var(--muted);
+}
+.sd-grid dd {
+  margin: 0;
+  min-width: 0;
+}
+.sd-sections {
+  display: grid;
+  gap: 2px;
+}
+.sd-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 56px;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  background: none;
+  padding: 3px 4px;
+  border-radius: 4px;
+  text-align: left;
+  color: var(--ink);
+  font-size: 13px;
+}
+.sd-section:not(:disabled) {
+  cursor: pointer;
+}
+.sd-section:not(:disabled):hover {
+  background: var(--hover);
+}
+.sd-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.sd-bar i {
+  display: block;
+  height: 100%;
+  background: var(--ink-2);
+}
+.sd-time {
+  text-align: right;
+}
+.sd-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: start;
+}
+.session-details.compact .sd-section {
+  grid-template-columns: minmax(0, 1fr) 50px 48px;
+}

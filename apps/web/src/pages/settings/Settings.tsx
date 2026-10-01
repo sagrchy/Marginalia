@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
-import { EFFORTS, EFFORT_LABEL, MODELS, THEMES, THEME_LABEL, modelInfo } from "@marginalia/shared";
+import { EFFORTS, EFFORT_LABEL, THEMES, THEME_LABEL, modelInfo } from "@marginalia/shared";
 import { api, type Memory, type StudyData, type StudyDay, type Subject, type Usage } from "../../lib/api";
 import { ymd } from "@marginalia/shared";
 import { clockTime, formatDuration, fmtTokens, relTime, resetText } from "../../lib/format";
@@ -768,6 +768,10 @@ function ClaudeSettings() {
   const info = useApp((s) => s.info)!;
   const settings = useApp((s) => s.settings)!;
   const save = useApp((s) => s.save);
+  const models = useApp((s) => s.models);
+  useEffect(() => {
+    void useApp.getState().loadModels();
+  }, []);
   return (
     <>
       <h1 className="h1">Claude</h1>
@@ -781,11 +785,26 @@ function ClaudeSettings() {
           <div className="small muted">What new chats start with. You can switch model for any message from the picker under the message box.</div>
         </div>
         <select className="select" style={{ width: 260 }} value={settings.model} onChange={(e) => void save({ model: e.target.value }).catch(toastError)} aria-label="Model">
-          {MODELS.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label} — {m.note}
-            </option>
-          ))}
+          <optgroup label="Latest (follows Claude Code updates)">
+            {models
+              .filter((m) => m.latest)
+              .map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                  {m.recommended ? " (recommended)" : ""}
+                </option>
+              ))}
+          </optgroup>
+          <optgroup label="Pinned versions">
+            {models
+              .filter((m) => !m.latest)
+              .map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+          </optgroup>
+          {!models.some((m) => m.value === settings.model) && <option value={settings.model}>{modelInfo(settings.model, models).label}</option>}
         </select>
       </section>
       <section className="set-row">
@@ -819,6 +838,21 @@ function ClaudeSettings() {
             {settings.maxTurns}
           </span>
         </div>
+      </section>
+      <section className="set-row">
+        <div>
+          <div className="set-label">Claude Code</div>
+          <div className="small muted">
+            {info.claude.executable
+              ? `Uses your installed Claude Code${info.claude.version ? ` (${info.claude.version})` : ""}, so updating Claude Code brings new models here. Restart Marginalia after an update.`
+              : info.engine === "agent-sdk"
+                ? "Uses the copy of Claude Code bundled with Marginalia. Install Claude Code (so `claude` is on your PATH) to get its updates and newest models."
+                : "Offline mock (MARGINALIA_ENGINE=mock)."}
+          </div>
+        </div>
+        <span className="small mono muted truncate" style={{ maxWidth: 220 }} title={info.claude.executable ?? ""}>
+          {info.claude.version ?? "bundled"}
+        </span>
       </section>
       <section className="set-row">
         <div>

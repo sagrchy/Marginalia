@@ -1,4 +1,4 @@
-import type { ActivityKind, Effort, ErrorKind, PlanLimit, PlanRow, TurnUsage } from "@marginalia/shared";
+import type { ActivityKind, Effort, ErrorKind, ModelOption, PlanLimit, PlanRow, TurnUsage } from "@marginalia/shared";
 
 /** Everything the engine needs to start (or resume) a Claude session for one study session. */
 export type SessionBrief = {
@@ -35,6 +35,10 @@ export interface ChatEngine {
   account(): Promise<{ email?: string; subscription?: string } | null>;
   /** The plan's usage meters (Claude Code's /usage). Null when they can't be fetched. */
   planUsage(): Promise<{ rows: PlanRow[]; at: number } | null>;
+  /** The models this Claude Code offers, newest of each family first. */
+  models(): Promise<ModelOption[]>;
+  /** Which Claude Code runs the sessions. */
+  runtime(): { executable: string | null; version: string | null };
   shutdown(): void;
 }
 

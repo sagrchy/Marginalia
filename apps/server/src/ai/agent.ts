@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { Effort, PlanLimit, PlanRow, TurnUsage } from "@marginalia/shared";
+import { query, type Options, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { FALLBACK_MODELS, prettyModel, type Effort, type ModelOption, type PlanLimit, type PlanRow, type TurnUsage } from "@marginalia/shared";
 import type { Workspace } from "../workspace";
 import { AsyncQueue, classifyError, type ChatEngine, type EngineEvent, type SessionBrief } from "./engine";
 import type { Describe } from "./activity";
@@ -39,6 +41,9 @@ type Live = {
 export class AgentEngine implements ChatEngine {
   readonly id = "agent-sdk";
   private live = new Map<number, Live>();
+  /** The student's own Claude Code, so updates (new models, fixes) reach Marginalia; null = the SDK's bundled copy. */
+  private readonly exe = findClaude();
+  private readonly version = claudeVersion(this.exe);
 
   constructor(
     private ws: Workspace,
@@ -72,6 +77,7 @@ export class AgentEngine implements ChatEngine {
         cwd: this.ws.root,
         model: brief.model,
         ...(brief.effort ? { effort: brief.effort } : {}),
+        ...(this.exe ? { pathToClaudeCodeExecutable: this.exe } : {}),
         systemPrompt: brief.systemPrompt,
         tools,
         // Loads the workspace's CLAUDE.md (the hand-off) and .claude/settings.json; never the user's own settings.
@@ -304,7 +310,7 @@ export class AgentEngine implements ChatEngine {
   private async fetchPlan(): Promise<PlanRow[] | null> {
     const q = query({
       prompt: "/usage",
-      options: { cwd: this.ws.root, tools: [], settingSources: [], persistSession: false, env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "marginalia/2.0" } },
+      options: this.probeOptions(),
     });
     const timer = setTimeout(() => q.close(), 20_000);
     q.accountInfo().then(
@@ -322,6 +328,52 @@ export class AgentEngine implements ChatEngine {
       return null;
     } finally {
       clearTimeout(timer);
+      try {
+        q.close();
+      } catch {
+        /* closed */
+      }
+    }
+  }
+
+  runtime() {
+    return { executable: this.exe, version: this.version };
+  }
+
+  private probeOptions(): Options {
+    return {
+      cwd: this.ws.root,
+      tools: [],
+      settingSources: [],
+      persistSession: false,
+      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "marginalia/2.0" },
+      ...(this.exe ? { pathToClaudeCodeExecutable: this.exe } : {}),
+    };
+  }
+
+  private modelList: { at: number; list: ModelOption[] } | null = null;
+  private modelsInflight: Promise<ModelOption[]> | null = null;
+
+  /** Claude Code's own model list (what /model shows), refreshed every 10 minutes. */
+  async models(): Promise<ModelOption[]> {
+    if (this.modelList && Date.now() - this.modelList.at < 10 * 60_000) return this.modelList.list;
+    this.modelsInflight ??= this.fetchModels().finally(() => (this.modelsInflight = null));
+    const list = await this.modelsInflight;
+    if (list.length) this.modelList = { at: Date.now(), list };
+    return list.length ? list : FALLBACK_MODELS;
+  }
+
+  private async fetchModels(): Promise<ModelOption[]> {
+    const idle = new AsyncQueue<SDKUserMessage>();
+    const q = query({ prompt: idle, options: this.probeOptions() });
+    const timer = setTimeout(() => q.close(), 20_000);
+    try {
+      return toModelOptions(await q.supportedModels());
+    } catch {
+      return [];
+    } finally {
+      clearTimeout(timer);
+      idle.end();
       try {
         q.close();
       } catch {
@@ -411,4 +463,62 @@ export function limitsFrom(i: {
     updatedAt: now,
   });
   return [...out.values()];
+}
+
+/** The `claude` on this machine: $MARGINALIA_CLAUDE_PATH, else on PATH, else the usual install location. */
+export function findClaude(): string | null {
+  const env = process.env.MARGINALIA_CLAUDE_PATH;
+  if (env) return env === "bundled" ? null : env;
+  const candidates = [
+    ...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map((d) => path.join(d, process.platform === "win32" ? "claude.exe" : "claude")),
+    path.join(os.homedir(), ".local", "bin", "claude"),
+    path.join(os.homedir(), ".claude", "local", "claude"),
+  ];
+  for (const c of candidates) {
+    try {
+      fs.accessSync(c, fs.constants.X_OK);
+      if (fs.statSync(c).isFile()) return c;
+    } catch {
+      /* not here */
+    }
+  }
+  return null;
+}
+
+function claudeVersion(exe: string | null): string | null {
+  if (!exe) return null;
+  try {
+    return execFileSync(exe, ["--version"], { timeout: 10_000, encoding: "utf8" }).trim().split(/\s+/)[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+type SdkModel = { value: string; resolvedModel?: string; displayName: string; description: string; supportedEffortLevels?: string[] | null };
+
+/**
+ * Claude Code's list → the picker's: the family aliases ("opus", "sonnet"…) first, labelled with what they are
+ * today, then pinned older versions. The "default" row only marks which one is recommended.
+ */
+export function toModelOptions(raw: SdkModel[]): ModelOption[] {
+  const recommended = raw.find((m) => m.value === "default")?.resolvedModel;
+  const rows = raw.filter((m) => m.value !== "default");
+  const isAlias = (m: SdkModel) => !m.value.startsWith("claude-");
+  const aliasTargets = new Set(rows.filter(isAlias).map((m) => m.resolvedModel ?? m.value));
+  const toOption = (m: SdkModel, latest: boolean): ModelOption => {
+    const model = m.resolvedModel ?? m.value;
+    return {
+      value: m.value,
+      model,
+      label: latest || !/^claude-/.test(m.displayName) ? m.displayName : prettyModel(model),
+      description: m.description,
+      efforts: (m.supportedEffortLevels ?? []).filter((e): e is ModelOption["efforts"][number] => ["low", "medium", "high", "xhigh", "max"].includes(e)),
+      latest,
+      recommended: model === recommended,
+    };
+  };
+  const latest = rows.filter(isAlias).map((m) => toOption(m, true));
+  // A pinned id that's also the current alias target would be a duplicate row.
+  const older = rows.filter((m) => !isAlias(m) && !aliasTargets.has(m.resolvedModel ?? m.value)).map((m) => toOption(m, false));
+  return [...latest, ...older];
 }
