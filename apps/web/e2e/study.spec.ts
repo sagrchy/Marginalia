@@ -153,9 +153,28 @@ test.describe.serial("Marginalia v2", () => {
     await expect(claude).toBeVisible({ visible });
   });
 
-  test("ending a session writes a summary that shows on the book page", async ({ page }) => {
+  test("moving between reader screens and starting a session from the panel never breaks the page", async ({ page }) => {
+    // From a session's reader straight to the same book without a session (the store still holds the old screen).
     await page.goto(`/#/book/${bookId}`);
     await page.getByRole("button", { name: "Continue" }).first().click();
+    await expect(page.locator(".pdfViewer .page canvas").first()).toBeVisible();
+    await page.evaluate((id) => (location.hash = `#/read/${id}`), bookId);
+    await expect(page.getByRole("button", { name: "Start session" })).toBeVisible();
+    await expect(page.getByText("Something went wrong")).toHaveCount(0);
+
+    await page.getByLabel("Session name").fill("Quick look");
+    await page.getByRole("button", { name: "Start session" }).click();
+    await expect(page.locator(".session-pill")).toContainText("Quick look");
+    await expect(page.locator(".pdfViewer .page canvas").first()).toBeVisible();
+    await expect(page.getByText("Something went wrong")).toHaveCount(0);
+  });
+
+  test("ending a session writes a summary that shows on the book page", async ({ page }) => {
+    await page.goto(`/#/book/${bookId}`);
+    // A session without any chat ends without a summary, and says so.
+    await page.locator("article.session", { hasText: "Quick look" }).getByRole("button", { name: "End" }).click();
+    await expect(page.locator("article.session", { hasText: "Quick look" })).toContainText("Reopen");
+    await page.locator("article.session", { hasText: "Continuity" }).getByRole("button", { name: "Continue" }).click();
     await page.locator(".session-pill").click();
     await page.getByRole("dialog", { name: "Session" }).getByRole("button", { name: "End session" }).click();
     const dialog = page.getByRole("dialog", { name: "Session ended" });

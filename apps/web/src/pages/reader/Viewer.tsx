@@ -68,7 +68,8 @@ export function Viewer({ startPage, onScale }: { startPage: number; onScale: (va
   // Create the pdf.js viewer once per document.
   useEffect(() => {
     if (!pdf || !container.current || !inner.current) return;
-    const bookNow = useReader.getState().book!;
+    const bookNow = useReader.getState().book;
+    if (!bookNow) return;
     let ready = false;
     const v = new PdfView(container.current, inner.current, {
       onReady: () => {

@@ -31,8 +31,13 @@ export function savedLayout(bookId: number): LayoutId {
 }
 
 export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessionId: number | null; startPage: number | null }) {
-  const book = useReader((s) => s.book);
-  const session = useReader((s) => s.session);
+  // The reader store is shared by every reader screen. Until this one has loaded its own book, what's in
+  // the store may belong to the screen we came from (another book or session), so ignore it.
+  const [loaded, setLoaded] = useState(false);
+  const storeBook = useReader((s) => s.book);
+  const storeSession = useReader((s) => s.session);
+  const book = loaded && storeBook?.id === bookId ? storeBook : null;
+  const session = book ? storeSession : null;
   const layout = useReader((s) => s.layout);
   const setLayout = useReader((s) => s.setLayout);
   const [error, setError] = useState<string | null>(null);
@@ -51,9 +56,18 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
   const [ending, setEnding] = useState<null | { summary: string; done: boolean; error: string | null }>(null);
 
   // ---------- Load book, session, highlights, notes and the PDF ----------
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   const openFile = useCallback(async (password: string | null) => {
     try {
       const pdf = await openPdf(api.fileUrl(bookId), password);
+      // Left this screen while the PDF was opening: don't hand it to the next one.
+      if (!alive.current) return void pdf.loadingTask.destroy();
       useReader.setState({ pdf });
       setNeedPassword(null);
     } catch (e) {
@@ -72,6 +86,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
         if (b.fileMissing) {
           setError("This book's PDF file is missing. Open the book page to choose the file again.");
           useReader.setState({ book: b });
+          setLoaded(true);
           return;
         }
         let s = null;
@@ -83,6 +98,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
         }
         if (cancelled) return;
         useReader.setState({ book: b, session: s, highlights: hs, notes: ns, page: startPage ?? b.lastPage });
+        setLoaded(true);
         void api.opened(bookId);
         await openFile(b.password);
       } catch (e) {
@@ -99,7 +115,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
 
   // ---------- Remember the page; record reading time ----------
   const page = useReader((s) => s.page);
-  const pdfReady = useReader((s) => s.view != null);
+  const pdfReady = useReader((s) => s.view != null) && book != null;
   useEffect(() => {
     if (!pdfReady) return;
     const t = setTimeout(() => api.patchBook(bookId, { lastPage: page }).catch(() => {}), 1200);
@@ -379,7 +395,15 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
       {ending && (
         <Dialog title={ending.done ? "Session ended" : "Ending session…"} onClose={() => ending.done && setEnding(null)} width={520}>
           {ending.error && <div className="error-box" style={{ marginBottom: 10 }}>{ending.error}</div>}
-          <div className="end-summary">{ending.summary ? <Markdown>{ending.summary}</Markdown> : <span className="muted">Claude is writing a short summary…</span>}</div>
+          <div className="end-summary">
+            {ending.summary ? (
+              <Markdown>{ending.summary}</Markdown>
+            ) : ending.done ? (
+              <span className="muted">No summary: you didn't talk with Claude in this session. Your reading time and pages are saved.</span>
+            ) : (
+              <span className="muted">Claude is writing a short summary…</span>
+            )}
+          </div>
           {ending.done && (
             <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
               <button className="btn" onClick={() => setEnding(null)}>
