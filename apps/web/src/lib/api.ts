@@ -67,6 +67,9 @@ export type Book = {
   /** Meaning search: pending | running | ready | off | failed */
   embedState: string;
   embedProgress: number;
+  /** Text recognition for scanned pages: none | pending | running | done | failed | off */
+  ocrState: string;
+  ocrProgress: number;
   brief: string | null;
   createdAt: number;
 };

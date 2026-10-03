@@ -94,6 +94,8 @@ describe("book tools Claude uses", () => {
     expect(tools.readPages({ from: "999" })).toMatch(/no page/);
     expect(tools.findInBook({ query: "Theorem 1" })).toContain("Theorem 1");
     expect(tools.outline({})).toContain("Calculus Sample — contents");
+    // Reading most of a chapter with no summary asks Claude to save one.
+    expect(tools.readPages({ from: "141", to: "146" })).toMatch(/no saved summary yet.*save_summary/);
   });
 
   it("summaries are saved once and reused by the outline", async () => {

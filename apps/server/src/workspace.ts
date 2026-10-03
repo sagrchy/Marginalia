@@ -104,7 +104,7 @@ export class Workspace {
     const dir = this.p("books", slug, "pages");
     fs.mkdirSync(dir, { recursive: true });
     for (const r of rows) {
-      const head = `[PDF page ${r.pageIndex + 1} · printed p. ${pageLabel(labels, r.pageIndex)}${r.quality !== "ok" ? ` · text ${r.quality === "empty" ? "missing (scanned page)" : "unreliable"}` : ""}]\n\n`;
+      const head = `[PDF page ${r.pageIndex + 1} · printed p. ${pageLabel(labels, r.pageIndex)}${r.quality === "ocr" ? " · text recognised from a scan" : r.quality !== "ok" ? ` · text ${r.quality === "empty" ? "missing (scanned page)" : "unreliable"}` : ""}]\n\n`;
       write(path.join(dir, pageFileName(r.pageIndex)), head + r.text + "\n");
     }
   }

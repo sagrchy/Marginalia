@@ -23,6 +23,6 @@ export default defineConfig({
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { PORT: String(port), MARGINALIA_DATA_DIR: dataDir, MARGINALIA_ENGINE: "mock" },
+    env: { PORT: String(port), MARGINALIA_DATA_DIR: dataDir, MARGINALIA_ENGINE: "mock", MARGINALIA_OCR: "off" },
   },
 });

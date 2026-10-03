@@ -121,6 +121,7 @@ PDFs are indexed in a worker thread when imported:
 - Contents come from the bookmarks, the printed contents page, headings, or fixed page ranges, in that order.
 - Printed page numbers are reconciled against the PDF's own labels.
 - The text is split into search passages, and the book's numbered things (definitions, theorems, examples, problems, figures, tables, boxes) are indexed with their pages.
+- Scanned pages (and PDFs whose fonts have no usable text) are read with local OCR — Tesseract's high-accuracy English model, downloaded once (~5 MB), roughly 2–4 s a page in a background worker, no plan usage. Recognised text feeds search, chapter detection and Claude (marked as "recognised from a scan"); pages it isn't confident about are still read as images. Set `MARGINALIA_OCR=off` to skip it.
 - Meaning-search vectors are computed afterwards in a background worker with a small local model (downloaded once, ~34 MB). Set `MARGINALIA_EMBEDDINGS=off` to skip them; keyword search still works.
 
 ## Project layout

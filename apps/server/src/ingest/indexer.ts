@@ -6,10 +6,29 @@ import { cleanTitle } from "@marginalia/shared";
 import type { Workspace } from "../workspace";
 import { getKv, setKv } from "../services/settings";
 import { embeddingsEnabled } from "./embed";
-import { TEXT_VERSION, extractBook, type ExtractResult } from "./extract";
+import {
+  TEXT_VERSION,
+  chaptersFromContents,
+  extractBook,
+  gradeText,
+  reconcileLabels,
+  type ExtractResult,
+} from "./extract";
+import {
+  OCR_MIN_CONFIDENCE,
+  ocrEnabled,
+  ocrPageNumber,
+  type OcrPage,
+} from "./ocr";
 import { prepareBook } from "./prepare";
 
 type Listener = (bookId: number) => void;
+
+/** Recognises the given pages of a PDF, reporting each page as it finishes. Injectable for tests. */
+export type OcrRunner = (
+  job: { file: string; password: string | null; pages: number[] },
+  onPage: (p: OcrPage) => void,
+) => Promise<void>;
 
 /**
  * Background indexing queue: one book at a time, in a worker thread so the server stays responsive.
@@ -25,7 +44,15 @@ export class Indexer {
     private db: Db,
     private ws: Workspace,
     private dataDir: string = "",
-  ) {}
+  ) {
+    this.ocr =
+      ocrEnabled() && dataDir
+        ? (job, onPage) => this.ocrInWorker(job, onPage)
+        : null;
+  }
+
+  /** Text recognition for scanned pages; null when turned off (MARGINALIA_OCR=off) or there's no data dir. */
+  ocr: OcrRunner | null;
 
   onChange(fn: Listener) {
     this.listeners.add(fn);
@@ -38,7 +65,11 @@ export class Indexer {
 
   enqueue(bookId: number) {
     if (this.running === bookId || this.queue.includes(bookId)) return;
-    this.db.update(books).set({ indexState: "queued", indexProgress: 0, indexError: null }).where(eq(books.id, bookId)).run();
+    this.db
+      .update(books)
+      .set({ indexState: "queued", indexProgress: 0, indexError: null })
+      .where(eq(books.id, bookId))
+      .run();
     this.queue.push(bookId);
     void this.pump();
   }
@@ -46,13 +77,30 @@ export class Indexer {
   /** Re-queue books left unfinished by a previous run, and bring older books up to date. */
   resume() {
     const upgrade = getKv(this.db, "textVersion", 1) < TEXT_VERSION;
-    for (const b of this.db.select().from(books).where(isNull(books.deletedAt)).all()) {
-      if (b.indexState === "queued" || b.indexState === "indexing" || (upgrade && b.indexState === "ready")) {
+    for (const b of this.db
+      .select()
+      .from(books)
+      .where(isNull(books.deletedAt))
+      .all()) {
+      if (
+        b.indexState === "queued" ||
+        b.indexState === "indexing" ||
+        (upgrade && b.indexState === "ready")
+      ) {
         this.enqueue(b.id);
         continue;
       }
       if (b.indexState !== "ready") continue;
-      const prepared = this.db.select({ n: sql<number>`count(*)` }).from(passages).where(eq(passages.bookId, b.id)).get()!.n > 0;
+      if (b.ocrState === "pending" || b.ocrState === "running") {
+        this.enqueueOcr(b.id);
+        continue;
+      }
+      const prepared =
+        this.db
+          .select({ n: sql<number>`count(*)` })
+          .from(passages)
+          .where(eq(passages.bookId, b.id))
+          .get()!.n > 0;
       if (!prepared) prepareBook(this.db, b.id);
       this.enqueueEmbed(b.id);
     }
@@ -65,11 +113,25 @@ export class Indexer {
 
   enqueueEmbed(bookId: number) {
     if (!embeddingsEnabled() || !this.dataDir) {
-      this.db.update(books).set({ embedState: "off" }).where(eq(books.id, bookId)).run();
+      this.db
+        .update(books)
+        .set({ embedState: "off" })
+        .where(eq(books.id, bookId))
+        .run();
       return;
     }
-    const b = this.db.select({ s: books.embedState }).from(books).where(eq(books.id, bookId)).get();
-    if (!b || b.s === "ready" || this.embedding === bookId || this.embedQueue.includes(bookId)) return;
+    const b = this.db
+      .select({ s: books.embedState })
+      .from(books)
+      .where(eq(books.id, bookId))
+      .get();
+    if (
+      !b ||
+      b.s === "ready" ||
+      this.embedding === bookId ||
+      this.embedQueue.includes(bookId)
+    )
+      return;
     this.embedQueue.push(bookId);
     void this.pumpEmbed();
   }
@@ -96,29 +158,44 @@ export class Indexer {
     return new Promise((resolve) => {
       let worker: Worker;
       try {
-        worker = new Worker(new URL("./embed-worker.ts", import.meta.url), { workerData: { dbFile: dbPath(this.dataDir), dataDir: this.dataDir, bookId } });
+        worker = new Worker(new URL("./embed-worker.ts", import.meta.url), {
+          workerData: {
+            dbFile: dbPath(this.dataDir),
+            dataDir: this.dataDir,
+            bookId,
+          },
+        });
       } catch {
         set({ embedState: "off" });
         return resolve();
       }
       let last = 0;
-      worker.on("message", (m: { type: string; progress?: number; message?: string }) => {
-        if (m.type === "progress" && (Date.now() - last > 1000 || m.progress === 1)) {
-          last = Date.now();
-          set({ embedProgress: m.progress });
-        } else if (m.type === "done") set({ embedState: "ready", embedProgress: 1 });
-        else if (m.type === "error") {
-          console.warn(`Meaning search unavailable for book ${bookId}: ${m.message}`);
-          set({ embedState: "failed" });
-        }
-      });
+      worker.on(
+        "message",
+        (m: { type: string; progress?: number; message?: string }) => {
+          if (
+            m.type === "progress" &&
+            (Date.now() - last > 1000 || m.progress === 1)
+          ) {
+            last = Date.now();
+            set({ embedProgress: m.progress });
+          } else if (m.type === "done")
+            set({ embedState: "ready", embedProgress: 1 });
+          else if (m.type === "error") {
+            console.warn(
+              `Meaning search unavailable for book ${bookId}: ${m.message}`,
+            );
+            set({ embedState: "failed" });
+          }
+        },
+      );
       worker.on("error", () => set({ embedState: "failed" }));
       worker.on("exit", () => resolve());
     });
   }
 
   get busy() {
-    return this.running !== null || this.queue.length > 0;
+    return this.running !== null || this.queue.length > 0 || this.ocrBusy;
   }
 
   /** Resolves when the queue is empty (tests). */
@@ -147,40 +224,76 @@ export class Indexer {
       this.fail(bookId, "The PDF file is missing from the workspace.");
       return;
     }
-    this.db.update(books).set({ indexState: "indexing", indexProgress: 0 }).where(eq(books.id, bookId)).run();
+    this.db
+      .update(books)
+      .set({ indexState: "indexing", indexProgress: 0 })
+      .where(eq(books.id, bookId))
+      .run();
     this.emit(bookId);
     let lastWrite = 0;
     const progress = (p: number) => {
       if (Date.now() - lastWrite < 400 && p < 1) return;
       lastWrite = Date.now();
-      this.db.update(books).set({ indexProgress: p }).where(eq(books.id, bookId)).run();
+      this.db
+        .update(books)
+        .set({ indexProgress: p })
+        .where(eq(books.id, bookId))
+        .run();
       this.emit(bookId);
     };
     try {
-      const result = this.inline ? await extractBook(new Uint8Array(fs.readFileSync(file)), b.password, progress) : await this.inWorker(file, b.password, progress);
+      const result = this.inline
+        ? await extractBook(
+            new Uint8Array(fs.readFileSync(file)),
+            b.password,
+            progress,
+          )
+        : await this.inWorker(file, b.password, progress);
       this.store(bookId, result);
     } catch (e) {
       this.fail(bookId, e instanceof Error ? e.message : String(e));
     }
   }
 
-  private inWorker(file: string, password: string | null, onProgress: (p: number) => void): Promise<ExtractResult> {
+  private inWorker(
+    file: string,
+    password: string | null,
+    onProgress: (p: number) => void,
+  ): Promise<ExtractResult> {
     return new Promise((resolve, reject) => {
       let worker: Worker;
       try {
-        worker = new Worker(new URL("./worker.ts", import.meta.url), { workerData: { file, password } });
+        worker = new Worker(new URL("./worker.ts", import.meta.url), {
+          workerData: { file, password },
+        });
       } catch {
         // No TypeScript loader for workers in this runtime: index on the main thread instead.
-        extractBook(new Uint8Array(fs.readFileSync(file)), password, onProgress).then(resolve, reject);
+        extractBook(
+          new Uint8Array(fs.readFileSync(file)),
+          password,
+          onProgress,
+        ).then(resolve, reject);
         return;
       }
-      worker.on("message", (m: { type: string; progress?: number; result?: ExtractResult; message?: string }) => {
-        if (m.type === "progress") onProgress(m.progress!);
-        else if (m.type === "done") resolve(m.result!);
-        else if (m.type === "error") reject(new Error(m.message));
-      });
+      worker.on(
+        "message",
+        (m: {
+          type: string;
+          progress?: number;
+          result?: ExtractResult;
+          message?: string;
+        }) => {
+          if (m.type === "progress") onProgress(m.progress!);
+          else if (m.type === "done") resolve(m.result!);
+          else if (m.type === "error") reject(new Error(m.message));
+        },
+      );
       worker.on("error", reject);
-      worker.on("exit", (code) => code !== 0 && reject(new Error(`Indexer stopped (code ${code})`)));
+      worker.on(
+        "exit",
+        (code) =>
+          code !== 0 && reject(new Error(`Indexer stopped (code ${code})`)),
+      );
     });
   }
 
@@ -189,10 +302,22 @@ export class Indexer {
     if (!b || b.deletedAt) return;
     const metaTitle = r.title ? cleanTitle(r.title) : "";
     // Keep a title the student already edited; improve an auto-generated one from metadata.
-    const title = b.title === cleanTitle(b.fileName) && metaTitle.length > 3 ? metaTitle : b.title;
+    const title =
+      b.title === cleanTitle(b.fileName) && metaTitle.length > 3
+        ? metaTitle
+        : b.title;
     this.db.transaction((tx) => {
       tx.delete(pages).where(eq(pages.bookId, bookId)).run();
-      for (const p of r.pages) tx.insert(pages).values({ bookId, pageIndex: p.pageIndex, text: p.text, quality: p.quality, charCount: p.charCount }).run();
+      for (const p of r.pages)
+        tx.insert(pages)
+          .values({
+            bookId,
+            pageIndex: p.pageIndex,
+            text: p.text,
+            quality: p.quality,
+            charCount: p.charCount,
+          })
+          .run();
       tx.update(books)
         .set({
           title,
@@ -200,7 +325,8 @@ export class Indexer {
           pageCount: r.pageCount,
           pageLabels: b.labelRanges ? b.pageLabels : r.labels,
           chapters: b.chaptersSource === "manual" ? b.chapters : r.chapters,
-          chaptersSource: b.chaptersSource === "manual" ? "manual" : r.chaptersSource,
+          chaptersSource:
+            b.chaptersSource === "manual" ? "manual" : r.chaptersSource,
           emptyPages: r.pages.filter((p) => p.quality === "empty").length,
           garbledPages: r.pages.filter((p) => p.quality === "garbled").length,
           spreads: r.spreads,
@@ -211,16 +337,233 @@ export class Indexer {
         .where(eq(books.id, bookId))
         .run();
     });
-    const labels = this.db.select({ l: books.pageLabels }).from(books).where(eq(books.id, bookId)).get()!.l;
+    const labels = this.db
+      .select({ l: books.pageLabels })
+      .from(books)
+      .where(eq(books.id, bookId))
+      .get()!.l;
     this.ws.writePages(b.slug, r.pages, labels);
     prepareBook(this.db, bookId);
     this.ws.writeBookMd(this.db, bookId);
-    this.emit(bookId);
+    const scanned = r.pages.some((p) => p.quality !== "ok");
+    if (scanned && this.ocr) {
+      this.db
+        .update(books)
+        .set({ ocrState: "pending", ocrProgress: 0 })
+        .where(eq(books.id, bookId))
+        .run();
+      this.emit(bookId);
+      this.enqueueOcr(bookId); // embeddings follow once the recognised text is in
+    } else {
+      this.db
+        .update(books)
+        .set({ ocrState: scanned ? "off" : "none" })
+        .where(eq(books.id, bookId))
+        .run();
+      this.emit(bookId);
+      this.enqueueEmbed(bookId);
+    }
+  }
+
+  // ---------- Text recognition for scanned pages (its own queue, before meaning search) ----------
+  private ocrQueue: number[] = [];
+  private recognising: number | null = null;
+
+  enqueueOcr(bookId: number) {
+    if (
+      !this.ocr ||
+      this.recognising === bookId ||
+      this.ocrQueue.includes(bookId)
+    )
+      return;
+    this.ocrQueue.push(bookId);
+    void this.pumpOcr();
+  }
+
+  get ocrBusy() {
+    return this.recognising !== null || this.ocrQueue.length > 0;
+  }
+
+  private async pumpOcr() {
+    if (this.recognising !== null) return;
+    const id = this.ocrQueue.shift();
+    if (id == null) return;
+    this.recognising = id;
+    try {
+      await this.recognise(id);
+    } finally {
+      this.recognising = null;
+      void this.pumpOcr();
+    }
+  }
+
+  private async recognise(bookId: number) {
+    const b = this.db.select().from(books).where(eq(books.id, bookId)).get();
+    if (!b || b.deletedAt || !this.ocr) return;
+    const set = (v: Partial<typeof books.$inferInsert>) => {
+      this.db.update(books).set(v).where(eq(books.id, bookId)).run();
+      this.emit(bookId);
+    };
+    // Pages already recognised (an earlier run that was stopped) are skipped.
+    const todo = this.db
+      .select({ i: pages.pageIndex })
+      .from(pages)
+      .where(
+        and(
+          eq(pages.bookId, bookId),
+          sql`${pages.quality} in ('empty','garbled')`,
+          isNull(pages.confidence),
+        ),
+      )
+      .all()
+      .map((p) => p.i)
+      .sort((x, y) => x - y);
+    const total = todo.length;
+    let done = 0;
+    let last = 0;
+    set({ ocrState: "running" });
+    try {
+      if (total)
+        await this.ocr(
+          { file: this.ws.bookPdf(b.slug), password: b.password, pages: todo },
+          (p) => {
+            const row = this.db
+              .select()
+              .from(pages)
+              .where(
+                and(eq(pages.bookId, bookId), eq(pages.pageIndex, p.pageIndex)),
+              )
+              .get();
+            if (row) {
+              const good =
+                p.confidence >= OCR_MIN_CONFIDENCE &&
+                gradeText(p.text) === "ok";
+              const chars = p.text.replace(/\s/g, "").length;
+              // Keep the original text when recognition did worse than an (unreliable) text layer.
+              const keep = !good && row.quality === "garbled";
+              this.db
+                .update(pages)
+                .set({
+                  confidence: p.confidence,
+                  ...(keep
+                    ? {}
+                    : {
+                        text: p.text,
+                        charCount: chars,
+                        quality: good ? "ocr" : chars ? "garbled" : "empty",
+                      }),
+                })
+                .where(
+                  and(
+                    eq(pages.bookId, bookId),
+                    eq(pages.pageIndex, p.pageIndex),
+                  ),
+                )
+                .run();
+            }
+            done++;
+            if (Date.now() - last > 1000 || done === total) {
+              last = Date.now();
+              set({ ocrProgress: done / total });
+            }
+          },
+        );
+      this.afterOcr(bookId);
+      set({ ocrState: "done", ocrProgress: 1 });
+    } catch (e) {
+      console.warn(
+        `Text recognition failed for book ${bookId}: ${e instanceof Error ? e.message : e}`,
+      );
+      set({ ocrState: "failed" });
+    }
     this.enqueueEmbed(bookId);
   }
 
+  /** With the recognised text in: printed page numbers, a contents list if there was none, and fresh passages. */
+  private afterOcr(bookId: number) {
+    const b = this.db.select().from(books).where(eq(books.id, bookId)).get()!;
+    const rows = this.db
+      .select()
+      .from(pages)
+      .where(eq(pages.bookId, bookId))
+      .orderBy(pages.pageIndex)
+      .all();
+    let labels = b.pageLabels;
+    if (!b.labelRanges && rows.some((r) => r.quality === "ocr")) {
+      const nums = rows.map((r) =>
+        r.quality === "ocr"
+          ? ocrPageNumber(r.text)
+          : { arabic: null, roman: null },
+      );
+      labels =
+        reconcileLabels(
+          b.pageLabels,
+          nums.map((n) => n.arabic),
+          nums.map((n) => n.roman),
+        ) ?? b.pageLabels;
+    }
+    let chapters = b.chapters;
+    let source = b.chaptersSource;
+    if (source === "blocks" || source === "headings") {
+      const found = chaptersFromContents(rows, labels, b.pageCount);
+      if (found.length >= 2) {
+        chapters = found;
+        source = "contents";
+      }
+    }
+    this.db
+      .update(books)
+      .set({
+        pageLabels: labels,
+        chapters,
+        chaptersSource: source,
+        emptyPages: rows.filter((r) => r.quality === "empty").length,
+        garbledPages: rows.filter((r) => r.quality === "garbled").length,
+        embedState: "pending",
+        embedProgress: 0,
+      })
+      .where(eq(books.id, bookId))
+      .run();
+    this.ws.writePages(b.slug, rows, labels);
+    prepareBook(this.db, bookId);
+    this.ws.writeBookMd(this.db, bookId);
+  }
+
+  private ocrInWorker(
+    job: { file: string; password: string | null; pages: number[] },
+    onPage: (p: OcrPage) => void,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(new URL("./ocr-worker.ts", import.meta.url), {
+        workerData: {
+          ...job,
+          cachePath: `${this.dataDir}/models/tessdata`,
+          lang: "eng",
+        },
+      });
+      worker.on(
+        "message",
+        (m: { type: string; message?: string } & OcrPage) => {
+          if (m.type === "page") onPage(m);
+          else if (m.type === "done") resolve();
+          else if (m.type === "error") reject(new Error(m.message));
+        },
+      );
+      worker.on("error", reject);
+      worker.on("exit", (code) =>
+        code === 0
+          ? resolve()
+          : reject(new Error(`Text recognition stopped (code ${code})`)),
+      );
+    });
+  }
+
   private fail(bookId: number, message: string) {
-    this.db.update(books).set({ indexState: "failed", indexError: message.slice(0, 500) }).where(and(eq(books.id, bookId))).run();
+    this.db
+      .update(books)
+      .set({ indexState: "failed", indexError: message.slice(0, 500) })
+      .where(and(eq(books.id, bookId)))
+      .run();
     this.ws.writeBookMd(this.db, bookId);
     this.emit(bookId);
   }

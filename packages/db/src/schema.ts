@@ -47,6 +47,9 @@ export const books = sqliteTable(
     /** Meaning-search vectors: pending | running | ready | off | failed */
     embedState: text("embed_state").notNull().default("pending"),
     embedProgress: real("embed_progress").notNull().default(0),
+    /** Text recognition for scanned/garbled pages: none | pending | running | done | failed | off */
+    ocrState: text("ocr_state").notNull().default("none"),
+    ocrProgress: real("ocr_progress").notNull().default(0),
     /** Claude-written overview of the book (what it is, level, prerequisites, notation, organisation). */
     brief: text("brief"),
     lastOpenedAt: integer("last_opened_at"),
@@ -65,8 +68,10 @@ export const pages = sqliteTable(
       .references(() => books.id, { onDelete: "cascade" }),
     pageIndex: integer("page_index").notNull(),
     text: text("text").notNull().default(""),
-    /** ok | empty | garbled */
+    /** ok | empty | garbled | ocr (recognised from the page image) */
     quality: text("quality").notNull().default("ok"),
+    /** OCR confidence 0–100 for recognised pages. */
+    confidence: real("confidence"),
     charCount: integer("char_count").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.bookId, t.pageIndex] })],

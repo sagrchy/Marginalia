@@ -17,10 +17,12 @@
     "@marginalia/db": "workspace:*",
     "@marginalia/profiles": "workspace:*",
     "@marginalia/shared": "workspace:*",
+    "@napi-rs/canvas": "^1.0.10",
     "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.44.7",
     "hono": "^4.13.9",
     "pdfjs-dist": "^6.3.289",
+    "tesseract.js": "^7.0.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
