@@ -193,6 +193,16 @@ export class PdfView {
       matchDiacritics: false,
     });
   }
+  /** Briefly mark a passage on the current page (e.g. where Claude pointed). */
+  flash(quote: string) {
+    const q = quote.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!q) return;
+    this.find(q);
+    clearTimeout(this.flashTimer);
+    this.flashTimer = setTimeout(() => this.closeFind(), 6000);
+  }
+  private flashTimer?: ReturnType<typeof setTimeout>;
+
   closeFind() {
     this.findQuery = "";
     this.findStatus = { state: null, current: 0, total: 0 };

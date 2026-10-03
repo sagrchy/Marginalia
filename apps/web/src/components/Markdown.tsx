@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { Mermaid } from "./Mermaid";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -18,6 +19,13 @@ export const Markdown = memo(function Markdown({ children, onPage }: { children:
               {children}
             </a>
           ),
+          // ```mermaid blocks become diagrams.
+          pre: ({ children }) => {
+            const child = Array.isArray(children) ? children[0] : children;
+            const props = (child as { props?: { className?: string; children?: unknown } } | null)?.props;
+            if (props?.className?.includes("language-mermaid")) return <Mermaid code={String(props.children ?? "")} />;
+            return <pre>{children}</pre>;
+          },
           // Make "p. 143" / "pp. 140–143" references clickable.
           p: ({ children }) => <p>{linkPages(children, onPage)}</p>,
           li: ({ children }) => <li>{linkPages(children, onPage)}</li>,

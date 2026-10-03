@@ -696,3 +696,130 @@ a {
 .session-details.compact .sd-section {
   grid-template-columns: minmax(0, 1fr) 50px 48px;
 }
+
+/* ---------- New session form ---------- */
+.start {
+  display: grid;
+  gap: 14px;
+}
+.start.card {
+  padding: 16px;
+}
+.start-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.start-label {
+  padding-top: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.start-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.start-field .seg {
+  justify-self: start;
+}
+.start-hint {
+  padding-left: 2px;
+}
+.pages-row {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.page-input {
+  width: 72px;
+  flex: none;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.check input {
+  accent-color: var(--ink);
+}
+.more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: start;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.more-toggle .rot {
+  transform: rotate(90deg);
+}
+.start-more {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.start-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.danger {
+  color: var(--danger);
+}
+
+/* ---------- Flashcard review ---------- */
+.review {
+  display: grid;
+  gap: 12px;
+}
+.review-front {
+  font-size: 1.05em;
+  padding: 18px 4px 6px;
+}
+.review-back {
+  border-top: 1px solid var(--line);
+  padding: 14px 4px 4px;
+}
+.review-grades {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.review-grades .btn {
+  flex-direction: column;
+  height: auto;
+  padding: 8px 4px;
+  gap: 2px;
+}
+.grade-again {
+  border-color: var(--danger);
+}
+.review-done p {
+  margin: 4px 0 16px;
+}
+.diagram {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow-x: auto;
+  text-align: center;
+}
+.diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.mermaid-src {
+  font-size: 12px;
+}

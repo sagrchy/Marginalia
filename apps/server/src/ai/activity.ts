@@ -4,6 +4,17 @@ import { books, type Db } from "@marginalia/db";
 import type { ActivityKind } from "@marginalia/shared";
 import { pageLabel } from "../ingest/labels";
 import type { Workspace } from "../workspace";
+import { BOOK_TOOL_PREFIX } from "./tools";
+
+const SKILL_LABEL: Record<string, string> = {
+  "chapter-overview": "Preparing an overview",
+  explain: "Working out how to explain it",
+  "problem-help": "Thinking about the problem",
+  quiz: "Preparing questions",
+  "teach-back": "Reading your explanation",
+  diagrams: "Sketching a diagram",
+  "study-files": "Preparing study material",
+};
 
 export type Describe = (tool: string, input: Record<string, unknown>) => { kind: ActivityKind; label: string };
 
@@ -83,8 +94,33 @@ export function makeDescriber(db: Db, ws: Workspace): Describe {
         if (r.endsWith("/summary.md")) return { kind: "write", label: "Writing the session summary" };
         return { kind: "write", label: `Writing ${r}` };
       }
-      default:
-        return { kind: "other", label: tool };
+      case "Skill":
+        return { kind: "other", label: SKILL_LABEL[String(input.skill ?? input.name ?? "")] ?? "Getting ready" };
+      default: {
+        // The app's book tools.
+        const name = tool.startsWith(BOOK_TOOL_PREFIX) ? tool.slice(BOOK_TOOL_PREFIX.length) : null;
+        const range = (a: unknown, b: unknown) => (b && b !== a ? `pp. ${a}–${b}` : `p. ${a}`);
+        switch (name) {
+          case "search_book":
+            return { kind: "search", label: `Searching ${input.within === "scope" ? "this session's pages" : input.within === "chapter" ? "this chapter" : "the book"} for ${q(input.query, 40)}` };
+          case "read_pages":
+            return { kind: "read", label: `Reading ${range(input.from, input.to)}` };
+          case "book_outline":
+            return { kind: "read", label: input.of && input.of !== "book" ? `Looking at the outline of ${/^\w+$/.test(String(input.of)) && /\d/.test(String(input.of)) ? `the chapter around p. ${input.of}` : q(input.of, 40)}` : "Looking at the contents" };
+          case "find_in_book":
+            return { kind: "search", label: `Looking up ${q(input.query, 40)}` };
+          case "save_summary":
+            return { kind: "write", label: `Noting a summary of ${q(input.title, 40)}` };
+          case "show_on_page":
+            return { kind: "other", label: `Showing you p. ${input.page}` };
+          case "save_note":
+            return { kind: "write", label: input.title ? `Saving “${String(input.title).slice(0, 40)}” to your notes` : "Saving to your notes" };
+          case "make_flashcards":
+            return { kind: "write", label: `Making ${Array.isArray(input.cards) ? input.cards.length : ""} flashcards`.replace("  ", " ") };
+          default:
+            return { kind: "other", label: name ? name.replace(/_/g, " ") : tool };
+        }
+      }
     }
   };
 }

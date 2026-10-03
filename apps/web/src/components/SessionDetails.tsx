@@ -42,6 +42,21 @@ export function SessionDetails({ s, labels, liveMs = 0, compact = false, onSecti
           {s.status !== "ended" && span > 60_000 && <span className="muted"> · last active {when(s.lastActiveAt)}</span>}
         </dd>
 
+        {s.scopeText && (
+          <>
+            <dt>Scope</dt>
+            <dd>
+              {s.scopeText}
+              {s.scopeRead != null && s.scopeFrom != null && s.scopeTo != null && (
+                <span className="muted">
+                  {" "}
+                  · {s.scopeRead} of {s.scopeTo - s.scopeFrom + 1} pages read
+                </span>
+              )}
+            </dd>
+          </>
+        )}
+
         <dt>Reading time</dt>
         <dd>
           {reading >= 60_000 ? formatDuration(reading) : reading > 0 ? "under a minute" : "none yet"}

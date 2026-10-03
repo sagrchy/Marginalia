@@ -150,11 +150,21 @@ export function stripRunningLines(pages: PageExtract[]): PageExtract[] {
   });
 }
 
+/**
+ * Bump when cleaning changes, so already-indexed books are prepared again (see Indexer.upgrade).
+ * 2: repair fonts that map the "fi" ligature to a caron and opening quotes to a backslash (TeX books).
+ */
+export const TEXT_VERSION = 2;
+
 /** Lines → clean paragraph text: ligatures, soft hyphens, end-of-line hyphenation. */
 export function cleanText(lines: Line[]): string {
   const text = lines.map((l) => l.text).join("\n");
   return text
     .normalize("NFKC")
+    // "inˇnite", "ˇnd" → "infinite", "find" (a common broken ligature mapping in TeX-made PDFs)
+    .replace(/\u02C7(?=\p{L})|(?<=\p{L})\u02C7/gu, "fi")
+    // \sums" → “sums" (TeX's opening quote mapped to a backslash)
+    .replace(/(^|[\s(])\\(?=\p{L})/gmu, "$1“")
     .replace(/\u00ad/g, "")
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "\uFFFD")
     .replace(/([A-Za-z]{2,})-\n([a-z]{2,})/g, "$1$2")

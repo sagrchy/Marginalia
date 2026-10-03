@@ -1,10 +1,13 @@
 import { Worker } from "node:worker_threads";
 import fs from "node:fs";
-import { and, eq, isNull } from "drizzle-orm";
-import { books, pages, type Db } from "@marginalia/db";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { books, dbPath, pages, passages, type Db } from "@marginalia/db";
 import { cleanTitle } from "@marginalia/shared";
 import type { Workspace } from "../workspace";
-import { extractBook, type ExtractResult } from "./extract";
+import { getKv, setKv } from "../services/settings";
+import { embeddingsEnabled } from "./embed";
+import { TEXT_VERSION, extractBook, type ExtractResult } from "./extract";
+import { prepareBook } from "./prepare";
 
 type Listener = (bookId: number) => void;
 
@@ -21,6 +24,7 @@ export class Indexer {
   constructor(
     private db: Db,
     private ws: Workspace,
+    private dataDir: string = "",
   ) {}
 
   onChange(fn: Listener) {
@@ -39,11 +43,78 @@ export class Indexer {
     void this.pump();
   }
 
-  /** Re-queue books left unfinished by a previous run. */
+  /** Re-queue books left unfinished by a previous run, and bring older books up to date. */
   resume() {
+    const upgrade = getKv(this.db, "textVersion", 1) < TEXT_VERSION;
     for (const b of this.db.select().from(books).where(isNull(books.deletedAt)).all()) {
-      if (b.indexState === "queued" || b.indexState === "indexing") this.enqueue(b.id);
+      if (b.indexState === "queued" || b.indexState === "indexing" || (upgrade && b.indexState === "ready")) {
+        this.enqueue(b.id);
+        continue;
+      }
+      if (b.indexState !== "ready") continue;
+      const prepared = this.db.select({ n: sql<number>`count(*)` }).from(passages).where(eq(passages.bookId, b.id)).get()!.n > 0;
+      if (!prepared) prepareBook(this.db, b.id);
+      this.enqueueEmbed(b.id);
     }
+    if (upgrade) setKv(this.db, "textVersion", TEXT_VERSION);
+  }
+
+  // ---------- Meaning-search vectors (a second, slower background queue) ----------
+  private embedQueue: number[] = [];
+  private embedding: number | null = null;
+
+  enqueueEmbed(bookId: number) {
+    if (!embeddingsEnabled() || !this.dataDir) {
+      this.db.update(books).set({ embedState: "off" }).where(eq(books.id, bookId)).run();
+      return;
+    }
+    const b = this.db.select({ s: books.embedState }).from(books).where(eq(books.id, bookId)).get();
+    if (!b || b.s === "ready" || this.embedding === bookId || this.embedQueue.includes(bookId)) return;
+    this.embedQueue.push(bookId);
+    void this.pumpEmbed();
+  }
+
+  private async pumpEmbed() {
+    if (this.embedding !== null) return;
+    const id = this.embedQueue.shift();
+    if (id == null) return;
+    this.embedding = id;
+    try {
+      await this.embedBook(id);
+    } finally {
+      this.embedding = null;
+      void this.pumpEmbed();
+    }
+  }
+
+  private embedBook(bookId: number): Promise<void> {
+    const set = (v: Partial<typeof books.$inferInsert>) => {
+      this.db.update(books).set(v).where(eq(books.id, bookId)).run();
+      this.emit(bookId);
+    };
+    set({ embedState: "running" });
+    return new Promise((resolve) => {
+      let worker: Worker;
+      try {
+        worker = new Worker(new URL("./embed-worker.ts", import.meta.url), { workerData: { dbFile: dbPath(this.dataDir), dataDir: this.dataDir, bookId } });
+      } catch {
+        set({ embedState: "off" });
+        return resolve();
+      }
+      let last = 0;
+      worker.on("message", (m: { type: string; progress?: number; message?: string }) => {
+        if (m.type === "progress" && (Date.now() - last > 1000 || m.progress === 1)) {
+          last = Date.now();
+          set({ embedProgress: m.progress });
+        } else if (m.type === "done") set({ embedState: "ready", embedProgress: 1 });
+        else if (m.type === "error") {
+          console.warn(`Meaning search unavailable for book ${bookId}: ${m.message}`);
+          set({ embedState: "failed" });
+        }
+      });
+      worker.on("error", () => set({ embedState: "failed" }));
+      worker.on("exit", () => resolve());
+    });
   }
 
   get busy() {
@@ -142,8 +213,10 @@ export class Indexer {
     });
     const labels = this.db.select({ l: books.pageLabels }).from(books).where(eq(books.id, bookId)).get()!.l;
     this.ws.writePages(b.slug, r.pages, labels);
+    prepareBook(this.db, bookId);
     this.ws.writeBookMd(this.db, bookId);
     this.emit(bookId);
+    this.enqueueEmbed(bookId);
   }
 
   private fail(bookId: number, message: string) {

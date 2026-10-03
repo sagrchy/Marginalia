@@ -1,4 +1,5 @@
 import type { ActivityKind, Effort, ErrorKind, ModelOption, PlanLimit, PlanRow, TurnUsage } from "@marginalia/shared";
+import type { BookTools, UiEvent } from "./tools";
 
 /** Everything the engine needs to start (or resume) a Claude session for one study session. */
 export type SessionBrief = {
@@ -12,6 +13,11 @@ export type SessionBrief = {
   webSearch: boolean;
   /** Most tool calls allowed for one message before the turn is stopped. */
   maxToolCalls: number;
+  /** Tutor sessions: the workspace's CLAUDE.md and skills, and the book tools. Plain chats get neither. */
+  workspace: boolean;
+  bookTools: BookTools | null;
+  /** Keep the conversation on disk (resumable). False for sessions the student chose not to keep. */
+  persist: boolean;
   /** Cost already recorded for this session — a resumed Claude session reports cumulative totals. */
   priorCostUsd: number;
 };
@@ -21,12 +27,17 @@ export type EngineEvent =
   | { type: "activity"; id: string; kind: ActivityKind; label: string; tool: string; input: Record<string, unknown> }
   | { type: "activity_done"; id: string; ok: boolean }
   | { type: "limits"; limit: PlanLimit }
+  | { type: "ui"; event: UiEvent }
   | { type: "result"; ok: boolean; stopped: boolean; usage: TurnUsage; error?: { kind: ErrorKind; message: string } };
+
+/** One student message: text, plus images (e.g. a captured region of a page) as base64 PNG/JPEG. */
+export type TurnInput = { text: string; images?: { mediaType: "image/png" | "image/jpeg"; data: string }[] };
+export type TurnOptions = { model: string; effort: Effort | null; maxToolCalls?: number };
 
 export interface ChatEngine {
   readonly id: string;
   /** Send one message and stream what happens until Claude finishes the turn. */
-  send(brief: SessionBrief, text: string, opts: { model: string; effort: Effort | null }): AsyncGenerator<EngineEvent>;
+  send(brief: SessionBrief, message: TurnInput, opts: TurnOptions): AsyncGenerator<EngineEvent>;
   interrupt(sessionId: number): Promise<void>;
   /** Close the live process (it can be resumed later). */
   close(sessionId: number): void;

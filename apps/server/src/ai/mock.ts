@@ -3,7 +3,8 @@ import path from "node:path";
 import type { Workspace } from "../workspace";
 import { emptyUsage } from "./agent";
 import { FALLBACK_MODELS, type Effort } from "@marginalia/shared";
-import type { ChatEngine, EngineEvent, SessionBrief } from "./engine";
+import type { ChatEngine, EngineEvent, SessionBrief, TurnInput, TurnOptions } from "./engine";
+import type { UiEvent } from "./tools";
 
 /**
  * Offline stand-in for Claude used by tests and demos. It follows the same protocol: tool activity, streamed
@@ -12,7 +13,7 @@ import type { ChatEngine, EngineEvent, SessionBrief } from "./engine";
  */
 export class MockEngine implements ChatEngine {
   readonly id = "mock";
-  public sent: { brief: SessionBrief; text: string; model: string; effort: Effort | null }[] = [];
+  public sent: { brief: SessionBrief; text: string; model: string; effort: Effort | null; maxToolCalls?: number; images: number }[] = [];
   private live = new Set<number>();
   private stopping = new Set<number>();
 
@@ -22,8 +23,22 @@ export class MockEngine implements ChatEngine {
     return this.live.has(id);
   }
 
-  async *send(brief: SessionBrief, text: string, opts: { model: string; effort: Effort | null }): AsyncGenerator<EngineEvent> {
-    this.sent.push({ brief, text, model: opts.model, effort: opts.effort });
+  async *send(brief: SessionBrief, message: TurnInput, opts: TurnOptions): AsyncGenerator<EngineEvent> {
+    const text = message.text;
+    this.sent.push({ brief, text, model: opts.model, effort: opts.effort, maxToolCalls: opts.maxToolCalls, images: message.images?.length ?? 0 });
+    // "[[tool:name {json}]]" in a message runs a real book tool, so tests can exercise tools end to end.
+    const toolCall = /\[\[tool:(\w+)\s*(\{.*?\})?\]\]/s.exec(text);
+    if (toolCall && brief.bookTools && opts.maxToolCalls !== 0) {
+      const ui: UiEvent[] = [];
+      brief.bookTools.ctx.emit = (e) => ui.push(e);
+      yield { type: "activity", id: "tool", kind: "other", label: `Using ${toolCall[1]}`, tool: toolCall[1], input: {} };
+      const out = await brief.bookTools.call(toolCall[1], toolCall[2] ? JSON.parse(toolCall[2]) : {});
+      yield { type: "activity_done", id: "tool", ok: true };
+      for (const event of ui) yield { type: "ui", event };
+      if (yield* this.say(brief.sessionId, `Tool result: ${out.split("\n")[0]}`)) return;
+      yield { type: "result", ok: true, stopped: false, usage: { ...emptyUsage(), inputTokens: 900, outputTokens: 40, costUsd: 0.004, durationMs: 300, turns: 2 } };
+      return;
+    }
     this.live.add(brief.sessionId);
     this.stopping.delete(brief.sessionId);
     const fail = text.match(/\[\[fail:(limit|auth|network)\]\]/);

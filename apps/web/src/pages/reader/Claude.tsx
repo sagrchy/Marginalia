@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronRight, Loader2, MoreHorizontal, Pencil, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronRight, GraduationCap, Loader2, MoreHorizontal, Pencil, RotateCcw, Square, X } from "lucide-react";
 import { EFFORTS, EFFORT_LABEL, SESSION_TYPE_LABEL, effortFor, modelInfo, type ChatEvent, type PlanRow } from "@marginalia/shared";
 import { api, streamEvents, type Memory, type Message, type Session, type Usage } from "../../lib/api";
-import { clockTime, fmtTokens, label, niceTitle, resetText, sectionFor } from "../../lib/format";
+import { clockTime, fmtTokens, label, resetText } from "../../lib/format";
 import { go } from "../../lib/router";
 import { toast, toastError, useApp } from "../../state/app";
 import { Markdown } from "../../components/Markdown";
 import { Menu } from "../../components/ui";
 import { ModelPicker, choiceLabel, useChatChoice } from "../../components/ModelPicker";
+import { StartSession, planRequested } from "../../components/StartSession";
+import { Review } from "../../components/Review";
 import { useReader } from "./state";
 
 type Live = {
@@ -24,56 +26,17 @@ export function ClaudePanel({ onEnd }: { onEnd: () => void }) {
   return <aside className="claude" aria-label="Claude">{session ? <Chat key={session.id} session={session} onEnd={onEnd} /> : <QuickStart />}</aside>;
 }
 
-/** Reading without a session: offer to start one right here. */
+/** Reading without a session: start one right here. */
 function QuickStart() {
   const book = useReader((s) => s.book)!;
   const page = useReader((s) => s.page);
-  const where = sectionFor(book.chapters, page);
-  const [name, setName] = useState(niceTitle(where.section ?? where.chapter ?? "Reading"));
-  const [goal, setGoal] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    setName(niceTitle(where.section ?? where.chapter ?? "Reading"));
-  }, [where.section, where.chapter]);
   return (
     <div className="claude-empty">
-      <h2 className="h2">Study with Claude</h2>
-      <p className="muted small">
-        Start a session to ask questions. Claude sees where you are in the book, can read any page, and keeps the conversation so you can pick it up later.
-      </p>
-      <form
-        className="stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          try {
-            const s = await api.startSession(book.id, { name: name.trim() || "Reading", goal: goal.trim() || null, type: "first_read" });
-            go({ name: "read", bookId: book.id, sessionId: s.id, page }, { replace: true });
-          } catch (err) {
-            toastError(err);
-            setBusy(false);
-          }
-        }}
-      >
-        <div className="field">
-          <label className="label" htmlFor="qs-name">
-            Session name
-          </label>
-          <input id="qs-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label className="label" htmlFor="qs-goal">
-            Goal <span className="muted">(optional)</span>
-          </label>
-          <input id="qs-goal" className="input" value={goal} onChange={(e) => setGoal(e.target.value)} />
-        </div>
-        <button className="btn primary" disabled={busy}>
-          Start session
-        </button>
-        <button type="button" className="link small" onClick={() => go({ name: "book", bookId: book.id })}>
-          Or continue an earlier session
-        </button>
-      </form>
+      <h2 className="h2">Start a session</h2>
+      <StartSession book={book} page={page} compact onStarted={(s) => go({ name: "read", bookId: book.id, sessionId: s.id, page }, { replace: true })} />
+      <button type="button" className="link small" style={{ justifySelf: "start" }} onClick={() => go({ name: "book", bookId: book.id })}>
+        Or continue an earlier session
+      </button>
     </div>
   );
 }
@@ -87,6 +50,25 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
   const [live, setLive] = useState<Live | null>(null);
   const [draft, setDraft] = useState("");
   const [choice, setChoice] = useChatChoice();
+  const [mode, setModeState] = useState<AnswerMode>(() => {
+    try {
+      return (localStorage.getItem("marginalia.answerMode") as AnswerMode) || "normal";
+    } catch {
+      return "normal";
+    }
+  });
+  const setMode = (m: AnswerMode) => {
+    setModeState(m);
+    try {
+      localStorage.setItem("marginalia.answerMode", m);
+    } catch {
+      /* ignore */
+    }
+  };
+  const [teach, setTeach] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const plain = session.ai === "plain";
+  const scopeName = session.scopeLabel ?? "this chapter";
   const [usage, setUsage] = useState<{ plan: PlanRow[]; context: number | null }>({ plan: [], context: null });
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -192,18 +174,11 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
     }
   };
 
-  const send = async (text: string) => {
-    const t = text.trim();
-    if (!t || busy.current) return;
-    if (/^\/[a-z]+(\s|$)/i.test(t)) return void runCommand(t).catch(toastError);
+  /** Stream one turn (a message, or the session plan) into the chat. */
+  const stream = async (url: string, body: Record<string, unknown>, shown: { text: string; pageIndex: number; selection: string | null }, restore?: () => void) => {
     busy.current = true;
-    const st = useReader.getState();
-    const visible = st.view?.visiblePages() ?? [st.page];
-    const a = st.ask;
     stick.current = true;
-    setDraft("");
-    useReader.setState({ ask: null });
-    const l: Live = { text: "", userText: t, pageIndex: visible[0] ?? st.page, selection: a?.text ?? null, activities: [], error: null };
+    const l: Live = { text: "", userText: shown.text, pageIndex: shown.pageIndex, selection: shown.selection, activities: [], error: null };
     setLive(l);
     let cur = l;
     const upd = (f: (x: Live) => Live) => {
@@ -211,49 +186,108 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
       setLive(cur);
     };
     let finished = false;
-    await streamEvents(
-      `/sessions/${session.id}/chat`,
-      { text: t, model: choice.model, effort: choice.effort ?? undefined, view: { visiblePages: visible.length ? visible : [st.page], selection: a ? { text: a.text.slice(0, 8000), pageIndex: a.pageIndex } : null, highlightId: a?.highlightId ?? null } },
-      (e: ChatEvent) => {
-        switch (e.type) {
-          case "text":
-            upd((x) => ({ ...x, text: x.text + e.text }));
-            break;
-          case "activity":
-            upd((x) => ({ ...x, activities: [...x.activities, { id: e.id, label: e.label, done: false, ok: true }] }));
-            break;
-          case "activity_done":
-            upd((x) => ({ ...x, activities: x.activities.map((y) => (y.id === e.id ? { ...y, done: true, ok: e.ok } : y)) }));
-            break;
-          case "memory":
-            setMemories((m) => [...m, ...e.memories.map((x) => ({ id: x.id, text: x.text, status: "proposed" as const, source: "ai" as const, subjectId: null, bookId: book.id, sessionId: session.id, messageId: null, createdAt: Date.now() }))]);
-            break;
-          case "limits":
-            break; // the meters are refreshed from /usage when the reply ends
-          case "done":
-            finished = true;
-            break;
-          case "error":
-            upd((x) => ({ ...x, error: { message: e.message, retryable: e.retryable, kind: e.kind } }));
-            break;
-        }
-      },
-    );
-    if (finished || (!cur.error && cur.text)) {
-      await load();
-      setLive(null);
+    await streamEvents(url, body, (e: ChatEvent) => {
+      switch (e.type) {
+        case "text":
+          upd((x) => ({ ...x, text: x.text + e.text }));
+          break;
+        case "activity":
+          upd((x) => ({ ...x, activities: [...x.activities, { id: e.id, label: e.label, done: false, ok: true }] }));
+          break;
+        case "activity_done":
+          upd((x) => ({ ...x, activities: x.activities.map((y) => (y.id === e.id ? { ...y, done: true, ok: e.ok } : y)) }));
+          break;
+        case "memory":
+          setMemories((m) => [...m, ...e.memories.map((x) => ({ id: x.id, text: x.text, status: "proposed" as const, source: "ai" as const, subjectId: null, bookId: book.id, sessionId: session.id, messageId: null, createdAt: Date.now() }))]);
+          break;
+        case "show":
+          // Claude pointed at a passage: go there and mark it.
+          useReader.getState().jump(e.pageIndex);
+          if (e.quote) setTimeout(() => useReader.getState().view?.flash(e.quote!), 350);
+          break;
+        case "note":
+          void api.notes(book.id).then((notes) => useReader.setState({ notes }));
+          toast({
+            text: e.title ? `Saved “${e.title}” to your notes.` : "Saved to your notes.",
+            action: { label: "Open", run: () => useReader.getState().setLayout({ sidebar: true, sidebarTab: "notes" }) },
+          });
+          break;
+        case "cards":
+          toast({ text: `Added ${e.count} flashcard${e.count === 1 ? "" : "s"} to this book.`, action: { label: "Review", run: () => setReviewing(true) } });
+          break;
+        case "limits":
+          break; // the meters are refreshed from /usage when the reply ends
+        case "done":
+          finished = true;
+          break;
+        case "error":
+          upd((x) => ({ ...x, error: { message: e.message, retryable: e.retryable, kind: e.kind } }));
+          break;
+      }
+    });
+    if (finished || (!cur.error && cur.text) || cur.error?.kind === "aborted") {
       // A stopped reply keeps its partial text but isn't an error.
-    } else if (cur.error?.kind === "aborted") {
       await load();
       setLive(null);
     } else if (cur.error) {
       // The server dropped the failed message: give the text back so nothing is lost.
-      setDraft((d) => d || t);
-      if (a) useReader.setState({ ask: a });
+      restore?.();
       await load().catch(() => {});
     }
     busy.current = false;
     void loadUsage();
+  };
+
+  const send = async (text: string) => {
+    let t = text.trim();
+    if (!t || busy.current) return;
+    if (/^\/[a-z]+(\s|$)/i.test(t)) return void runCommand(t).catch(toastError);
+    const st = useReader.getState();
+    const visible = st.view?.visiblePages() ?? [st.page];
+    const a = st.ask;
+    const wasTeach = teach;
+    if (teach) {
+      t = `${TEACH_PREFIX}${t}`;
+      setTeach(false);
+    }
+    setDraft("");
+    useReader.setState({ ask: null });
+    await stream(
+      `/sessions/${session.id}/chat`,
+      {
+        text: t,
+        mode: plain ? "normal" : mode,
+        model: choice.model,
+        effort: choice.effort ?? undefined,
+        view: { visiblePages: visible.length ? visible : [st.page], selection: a ? { text: a.text.slice(0, 8000), pageIndex: a.pageIndex } : null, highlightId: a?.highlightId ?? null },
+      },
+      { text: t, pageIndex: visible[0] ?? st.page, selection: a?.text ?? null },
+      () => {
+        setDraft((d) => d || text.trim());
+        if (wasTeach) setTeach(true);
+        if (a) useReader.setState({ ask: a });
+      },
+    );
+  };
+
+  // A plan was asked for when the session started: Claude writes it as the first message.
+  const planned = useRef(false);
+  useEffect(() => {
+    if (planned.current || messages == null || messages.length || session.ai !== "tutor" || !planRequested(session.id)) return;
+    planned.current = true;
+    const st = useReader.getState();
+    void stream(`/sessions/${session.id}/plan`, { view: { visiblePages: [st.page] } }, { text: "Plan this session", pageIndex: st.page, selection: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
+  const study = (what: "overview" | "quiz" | "cards" | "cheat") => {
+    const prompts = {
+      overview: `Give me an overview of ${session.scopeLabel ? `${session.scopeLabel}` : "this chapter"}.`,
+      quiz: `Quiz me on ${scopeName}.`,
+      cards: `Make flashcards for the most important ideas in ${scopeName}.`,
+      cheat: `Make a cheat sheet for ${scopeName} and save it to my notes.`,
+    };
+    void send(prompts[what]);
   };
 
   const stop = () => api.stop(session.id).catch(toastError);
@@ -273,12 +307,13 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
     stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   };
 
-  const suggestions =
-    session.type === "problem_solving"
+  const suggestions = plain
+    ? []
+    : session.type === "problem_solving"
       ? ["Give me a hint for the problem I'm on", "Check my reasoning so far", "What should I try first here?"]
       : session.type === "review"
-        ? ["Quiz me on what I read", "What are the key ideas so far?", "What did I struggle with last time?"]
-        : ["Explain this page", "What's the main idea of this section?", "Quiz me on this section"];
+        ? [`Quiz me on ${scopeName}`, "What are the key ideas so far?", "What did I struggle with last time?"]
+        : [`Give me an overview of ${scopeName}`, "Explain this page", `Quiz me on ${scopeName}`];
 
   const lastError = live?.error && live.error.kind !== "aborted" ? live : null;
 
@@ -288,11 +323,13 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
         <div className="truncate">
           <div className="claude-title truncate">{session.name}</div>
           <div className="small muted truncate">
-            {SESSION_TYPE_LABEL[session.type]}
+            {plain ? "Plain chat — no book context" : SESSION_TYPE_LABEL[session.type]}
+            {session.scopeText ? ` · ${session.scopeText}` : ""}
             {session.goal ? ` · ${session.goal}` : ""}
           </div>
         </div>
         <span className="spacer" />
+        <UsageLine plan={usage.plan} context={usage.context} />
         <Menu
           label="Session options"
           trigger={() => (
@@ -323,7 +360,7 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
         {messages == null && <div className="empty small">Loading…</div>}
         {messages?.length === 0 && !live && !readOnly && (
           <div className="claude-hello">
-            <p className="muted small">Ask anything about what you're reading — Claude knows which page you're on.</p>
+            <p className="muted small">{plain ? "Ask Claude anything. This chat doesn't see your book." : "Ask about anything you're reading — Claude sees the page you're on and can look up the rest of the book."}</p>
             <div className="suggest">
               {suggestions.map((s) => (
                 <button key={s} className="chip-btn" onClick={() => void send(s)} disabled={ended}>
@@ -382,6 +419,7 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
         </div>
       </div>
 
+      {reviewing && <Review bookId={book.id} title={book.title} labels={book.pageLabels} onClose={() => setReviewing(false)} onPage={(p) => useReader.getState().jump(p)} />}
       {readOnly ? (
         <div className="claude-foot notice-foot small muted">Imported from the previous version of Marginalia — read only. Start a new session to keep studying.</div>
       ) : ended ? (
@@ -410,6 +448,16 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
               </button>
             </div>
           )}
+          {teach && (
+            <div className="ask-chip teach-chip">
+              <span className="small">
+                <b>Explain it back.</b> Teach it in your own words, as if to a friend. Claude points out gaps and asks questions.
+              </span>
+              <button className="icon-btn" aria-label="Cancel explain it back" onClick={() => setTeach(false)}>
+                <X size={13} />
+              </button>
+            </div>
+          )}
           <div className="composer">
             {/^\/\w*$/.test(draft) && (
               <CommandHints
@@ -424,7 +472,7 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
               ref={input}
               rows={1}
               className="composer-input"
-              placeholder={ask ? "Ask about the selection…" : "Ask Claude…"}
+              placeholder={teach ? `Explain ${scopeName === "this chapter" ? "the idea" : scopeName} in your own words…` : ask ? "Ask about the selection…" : plain ? "Message Claude…" : "Ask Claude…"}
               value={draft}
               aria-label="Message Claude"
               onChange={(e) => setDraft(e.target.value)}
@@ -445,8 +493,28 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
               style={{ height: Math.min(180, Math.max(40, 22 + draft.split("\n").length * 20)) }}
             />
             <div className="composer-row">
+              {!plain && (
+                <Menu
+                  label="Study"
+                  align="start"
+                  trigger={() => (
+                    <button className="tb-btn icon" aria-label="Study methods" title="Study methods">
+                      <GraduationCap size={15} />
+                    </button>
+                  )}
+                  items={[
+                    { label: "Explain it back (Feynman)", onSelect: () => (setTeach(true), setTimeout(() => input.current?.focus(), 0)) },
+                    { label: "Quiz me", onSelect: () => study("quiz") },
+                    { label: "Overview", onSelect: () => study("overview") },
+                    "sep",
+                    { label: "Make flashcards", onSelect: () => study("cards") },
+                    { label: "Cheat sheet to notes", onSelect: () => study("cheat") },
+                    { label: "Review flashcards", onSelect: () => setReviewing(true) },
+                  ]}
+                />
+              )}
+              {!plain && <ModeSwitch mode={mode} onChange={setMode} />}
               <ModelPicker value={choice} onChange={setChoice} />
-              <UsageLine plan={usage.plan} context={usage.context} />
               <span className="spacer" />
               {live && !live.error ? (
                 <button className="send stop" onClick={stop} aria-label="Stop" title="Stop">
@@ -466,11 +534,38 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
 }
 
 
+type AnswerMode = "quick" | "normal" | "deep";
+const TEACH_PREFIX = "[Teach-back] ";
+const MODES: { m: AnswerMode; label: string; hint: string }[] = [
+  { m: "quick", label: "Quick", hint: "Answer straight away from the page and the chat — no lookups" },
+  { m: "normal", label: "Normal", hint: "Look up what the question needs" },
+  { m: "deep", label: "Deep", hint: "Thorough: read whole sections, connect chapters, think harder" },
+];
+
+function ModeSwitch({ mode, onChange }: { mode: AnswerMode; onChange: (m: AnswerMode) => void }) {
+  return (
+    <div className="mode-switch" role="radiogroup" aria-label="Answer mode">
+      {MODES.map((x) => (
+        <button key={x.m} role="radio" aria-checked={mode === x.m} className={mode === x.m ? "on" : ""} title={x.hint} onClick={() => onChange(x.m)}>
+          {x.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function UserMsg({ m, labels }: { m: Pick<Message, "content" | "pageIndex" | "selection">; labels: string[] | null }) {
   return (
     <div className="msg user">
       {m.selection && <div className="msg-quote">“{m.selection.length > 240 ? `${m.selection.slice(0, 240)}…` : m.selection}”</div>}
-      <div className="msg-user-text">{m.content}</div>
+      {m.content.startsWith(TEACH_PREFIX) ? (
+        <>
+          <div className="msg-tag">Explain it back</div>
+          <div className="msg-user-text">{m.content.slice(TEACH_PREFIX.length)}</div>
+        </>
+      ) : (
+        <div className="msg-user-text">{m.content}</div>
+      )}
       {m.pageIndex != null && (
         <button className="msg-page" onClick={() => useReader.getState().jump(m.pageIndex!)} title="Go to the page you were on">
           p. {label(labels, m.pageIndex)}

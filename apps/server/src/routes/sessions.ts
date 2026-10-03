@@ -6,6 +6,7 @@ import { books, highlights, memories, messages, notes, readingEvents, sessions, 
 import { ChatBody, SessionBody, SessionPatch, slugify, type ChatEvent } from "@marginalia/shared";
 import { folderStamp } from "../services/legacy";
 import { labelRanges, sessionPages, sessionReadingMs } from "../services/study";
+import { pageLabel } from "../ingest/labels";
 import { HttpError, body, id, must, type Deps } from "./util";
 
 export function sessionRoutes({ db, ws, chat, engine }: Deps) {
@@ -66,6 +67,11 @@ export function sessionRoutes({ db, ws, chat, engine }: Deps) {
       readingMs: sessionReadingMs(db, s.id),
       pages,
       pagesRead: labelRanges(pages, b?.labels ?? null),
+      scopeRead: s.scopeFrom != null && s.scopeTo != null ? pages.filter((p) => p >= s.scopeFrom! && p <= s.scopeTo!).length : null,
+      scopeText:
+        s.scopeFrom != null && s.scopeTo != null
+          ? `${s.scopeLabel ? `${s.scopeLabel} · ` : ""}${s.scopeFrom === s.scopeTo ? "p." : "pp."} ${pageLabel(b?.labels ?? null, s.scopeFrom)}${s.scopeFrom === s.scopeTo ? "" : `–${pageLabel(b?.labels ?? null, s.scopeTo)}`}`
+          : null,
       sections: [...sections.values()].sort((x, y) => x.first - y.first).map(({ title, ms, pageIndex }) => ({ title, ms, pageIndex })),
       messageCount: msgCounts.reduce((n, m) => n + Number(m.n), 0),
       questions: Number(msgCounts.find((m) => m.role === "user")?.n ?? 0),
@@ -91,7 +97,21 @@ export function sessionRoutes({ db, ws, chat, engine }: Deps) {
     const folder = `books/${b.slug}/sessions/${folderStamp(Date.now())}-${slugify(s.name, 40)}`;
     const row = db
       .insert(sessions)
-      .values({ bookId: b.id, name: s.name, goal: s.goal || null, type: s.type, timeboxMin: s.timeboxMin ?? null, claudeSessionId: crypto.randomUUID(), folder, status: "open" })
+      .values({
+        bookId: b.id,
+        name: s.name,
+        goal: s.goal || null,
+        type: s.type,
+        timeboxMin: s.timeboxMin ?? null,
+        scopeFrom: s.scopeFrom != null && s.scopeTo != null ? Math.min(s.scopeFrom, s.scopeTo, b.pageCount - 1) : null,
+        scopeTo: s.scopeFrom != null && s.scopeTo != null ? Math.min(Math.max(s.scopeFrom, s.scopeTo), b.pageCount - 1) : null,
+        scopeLabel: s.scopeFrom != null ? s.scopeLabel || null : null,
+        ai: s.ai,
+        ephemeral: s.ephemeral,
+        claudeSessionId: crypto.randomUUID(),
+        folder,
+        status: "open",
+      })
       .returning()
       .get();
     ws.writeSessionMd(db, row.id);
@@ -146,6 +166,14 @@ export function sessionRoutes({ db, ws, chat, engine }: Deps) {
     const b = await body(c, ChatBody);
     must(db.select().from(sessions).where(eq(sessions.id, sid)).get(), "Session not found");
     return sse(c, () => chat.send(sid, b));
+  });
+
+  /** Claude proposes a plan for the session (streamed like a reply, kept with the session). */
+  app.post("/sessions/:id/plan", async (c) => {
+    const sid = id(c);
+    const b = await body(c, ChatBody.pick({ view: true }));
+    must(db.select().from(sessions).where(eq(sessions.id, sid)).get(), "Session not found");
+    return sse(c, () => chat.plan(sid, b.view));
   });
 
   app.post("/sessions/:id/stop", async (c) => {

@@ -5,7 +5,8 @@ import path from "node:path";
 import { query, type Options, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { FALLBACK_MODELS, prettyModel, type Effort, type ModelOption, type PlanLimit, type PlanRow, type TurnUsage } from "@marginalia/shared";
 import type { Workspace } from "../workspace";
-import { AsyncQueue, classifyError, type ChatEngine, type EngineEvent, type SessionBrief } from "./engine";
+import { AsyncQueue, classifyError, type ChatEngine, type EngineEvent, type SessionBrief, type TurnInput, type TurnOptions } from "./engine";
+import { BOOK_SERVER, BOOK_TOOL_PREFIX, bookMcpServer } from "./tools";
 import type { Describe } from "./activity";
 
 const IDLE_CLOSE_MS = 20 * 60 * 1000;
@@ -56,7 +57,9 @@ export class AgentEngine implements ChatEngine {
 
   private start(brief: SessionBrief): Live {
     const input = new AsyncQueue<SDKUserMessage>();
-    const tools = ["Read", "Grep", "Glob", "Write", "Edit", ...(brief.webSearch ? ["WebSearch", "WebFetch"] : [])];
+    const web = brief.webSearch ? ["WebSearch", "WebFetch"] : [];
+    // Tutor sessions work in the study workspace; plain chats get only the web.
+    const tools = brief.workspace ? ["Read", "Grep", "Glob", "Write", "Edit", ...web] : web;
     const live: Live = {
       q: null as unknown as Query,
       input,
@@ -80,10 +83,12 @@ export class AgentEngine implements ChatEngine {
         ...(this.exe ? { pathToClaudeCodeExecutable: this.exe } : {}),
         systemPrompt: brief.systemPrompt,
         tools,
-        // Loads the workspace's CLAUDE.md (the hand-off) and .claude/settings.json; never the user's own settings.
-        settingSources: ["project"],
+        // Loads the workspace's CLAUDE.md, skills and .claude/settings.json; never the user's own settings.
+        settingSources: brief.workspace ? ["project"] : [],
+        ...(brief.workspace ? { skills: "all" as const } : {}),
+        ...(brief.bookTools ? { mcpServers: { [BOOK_SERVER]: bookMcpServer(brief.bookTools) } } : {}),
         includePartialMessages: true,
-        persistSession: true,
+        persistSession: brief.persist,
         ...(brief.resume ? { resume: brief.claudeSessionId } : { sessionId: brief.claudeSessionId }),
         canUseTool: async (tool, toolInput) => this.permit(live, tool, toolInput, brief.webSearch),
         env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "marginalia/2.0" },
@@ -93,6 +98,8 @@ export class AgentEngine implements ChatEngine {
         },
       },
     });
+    // Tools that act on the reader (show a page, a saved note…) report into the reply in progress.
+    if (brief.bookTools) brief.bookTools.ctx.emit = (event) => live.turn?.push({ type: "ui", event });
     this.live.set(brief.sessionId, live);
     void this.pump(brief.sessionId, live);
     return live;
@@ -100,6 +107,8 @@ export class AgentEngine implements ChatEngine {
 
   private async permit(live: Live, tool: string, input: Record<string, unknown>, web: boolean) {
     live.toolCalls++;
+    if (live.maxToolCalls === 0)
+      return { behavior: "deny" as const, message: "This is a Quick answer: no lookups. Answer from what's in the message and the conversation, or say that you'd need to look it up.", interrupt: false };
     if (live.toolCalls > live.maxToolCalls)
       return { behavior: "deny" as const, message: "You've used enough lookups for this message — answer with what you have.", interrupt: false };
     return decide(this.ws, tool, input, web);
@@ -201,7 +210,7 @@ export class AgentEngine implements ChatEngine {
     }
   }
 
-  async *send(brief: SessionBrief, text: string, opts: { model: string; effort: Effort | null }): AsyncGenerator<EngineEvent> {
+  async *send(brief: SessionBrief, message: TurnInput, opts: TurnOptions): AsyncGenerator<EngineEvent> {
     let live = this.live.get(brief.sessionId);
     if (live?.dead) {
       this.live.delete(brief.sessionId);
@@ -216,7 +225,7 @@ export class AgentEngine implements ChatEngine {
     const turn = new AsyncQueue<EngineEvent>();
     live.turn = turn;
     live.toolCalls = 0;
-    live.maxToolCalls = brief.maxToolCalls;
+    live.maxToolCalls = opts.maxToolCalls ?? brief.maxToolCalls;
     live.needBreak = false;
     live.textThisTurn = false;
     if (opts.model !== live.model) {
@@ -235,7 +244,13 @@ export class AgentEngine implements ChatEngine {
         /* keep the current effort */
       }
     }
-    live.input.push({ type: "user", parent_tool_use_id: null, message: { role: "user", content: text } } as SDKUserMessage);
+    const content = message.images?.length
+      ? [
+          ...message.images.map((im) => ({ type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType, data: im.data } })),
+          { type: "text" as const, text: message.text },
+        ]
+      : message.text;
+    live.input.push({ type: "user", parent_tool_use_id: null, message: { role: "user", content } } as SDKUserMessage);
     try {
       for await (const ev of turn) yield ev;
     } finally {
@@ -389,6 +404,8 @@ export class AgentEngine implements ChatEngine {
 
 /** Workspace sandbox: reads inside the workspace, writes only to the allowed files, the web if enabled, nothing else. */
 export function decide(ws: Workspace, tool: string, input: Record<string, unknown>, web: boolean) {
+  // The app's own book tools and loading a skill read nothing outside the workspace.
+  if (tool.startsWith(BOOK_TOOL_PREFIX) || tool === "Skill") return { behavior: "allow" as const, updatedInput: input };
   const file = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
   const abs = file ? path.resolve(ws.root, file.replace(/^~(?=$|\/)/, os.homedir())) : ws.root;
   if (READ_TOOLS.has(tool)) {

@@ -5,3 +5,5 @@ packages:
 allowBuilds:
   better-sqlite3: true
   esbuild: true
+  onnxruntime-node: true
+  protobufjs: false

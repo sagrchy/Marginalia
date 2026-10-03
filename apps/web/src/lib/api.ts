@@ -1,4 +1,4 @@
-import type { ChatEvent, ModelOption, PlanLimit, PlanRow, Settings, SettingsPatch, SessionType, ViewState, HighlightColor } from "@marginalia/shared";
+import type { ChatEvent, ModelOption, PlanLimit, PlanRow, Settings, SettingsPatch, SessionAi, SessionType, ViewState, HighlightColor } from "@marginalia/shared";
 
 export class ApiError extends Error {
   constructor(
@@ -64,6 +64,10 @@ export type Book = {
   spreads: boolean;
   lastPage: number;
   lastOpenedAt: number | null;
+  /** Meaning search: pending | running | ready | off | failed */
+  embedState: string;
+  embedProgress: number;
+  brief: string | null;
   createdAt: number;
 };
 export type LibraryBook = Book & { readingMs: number; sessionCount: number; openSessions: number; lastSessionAt: number | null; highlightCount: number; noteCount: number };
@@ -90,6 +94,17 @@ export type Session = {
   tokens: number;
   live: boolean;
   resumeCommand: string | null;
+  scopeFrom: number | null;
+  scopeTo: number | null;
+  scopeLabel: string | null;
+  /** "Chapter 22 · pp. 445–468" */
+  scopeText: string | null;
+  /** Pages of the scope read in this session. */
+  scopeRead: number | null;
+  ai: SessionAi;
+  ephemeral: boolean;
+  plan: string | null;
+  next: { from: number; to: number; label: string; why: string } | null;
   /** Printed page ranges read in this session, e.g. "142–150, 160". */
   pagesRead: string;
   /** Time per chapter/section, in reading order. */
@@ -140,7 +155,33 @@ export type Highlight = {
   createdAt: number;
   updatedAt: number;
 };
-export type Note = { id: number; bookId: number; sessionId: number | null; pageIndex: number | null; body: string; source: "user" | "ai"; createdAt: number; updatedAt: number };
+export type Note = { id: number; bookId: number; sessionId: number | null; pageIndex: number | null; title: string | null; body: string; source: "user" | "ai"; createdAt: number; updatedAt: number };
+export type SearchHit = { id: number; pageIndex: number; label: string; section: string | null; text: string; via: "keyword" | "meaning" | "both" };
+export type BookItem = { id: number; kind: string; label: string; pageIndex: number; page: string; section: string | null; text: string };
+export type ChapterProgress = { title: string; from: number; to: number; fromLabel: string; toLabel: string; pages: number; pagesRead: number; ms: number; summarized: boolean; cardsDue: number };
+export type Card = {
+  id: number;
+  bookId: number;
+  front: string;
+  back: string;
+  pageIndex: number | null;
+  source: "ai" | "user";
+  due: number;
+  reps: number;
+  lapses: number;
+  preview: Record<"again" | "hard" | "good" | "easy", string>;
+};
+export type NewSession = {
+  name: string;
+  goal?: string | null;
+  type: SessionType;
+  timeboxMin?: number | null;
+  scopeFrom?: number | null;
+  scopeTo?: number | null;
+  scopeLabel?: string | null;
+  ai: SessionAi;
+  ephemeral: boolean;
+};
 /** inTok: new input (incl. cache writes); cacheTok: cache reads (re-sent context); outTok: output incl. thinking. */
 export type UsageTotals = { inTok: number; cacheTok: number; outTok: number; cost: number; n: number };
 export type Usage = {
@@ -214,7 +255,7 @@ export const api = {
   fileUrl: (id: number) => `/api/books/${id}/file`,
 
   sessions: (bookId: number) => get<Session[]>(`/books/${bookId}/sessions`),
-  startSession: (bookId: number, b: { name: string; goal?: string | null; type: SessionType; timeboxMin?: number | null }) => post<Session>(`/books/${bookId}/sessions`, b),
+  startSession: (bookId: number, b: NewSession) => post<Session>(`/books/${bookId}/sessions`, b),
   session: (id: number) => get<{ session: Session; messages: Message[]; memories: Memory[] }>(`/sessions/${id}`),
   patchSession: (id: number, p: Partial<Pick<Session, "name" | "goal" | "type" | "timeboxMin">>) => patch<Session>(`/sessions/${id}`, p),
   reopenSession: (id: number) => post<Session>(`/sessions/${id}/reopen`),
@@ -231,6 +272,15 @@ export const api = {
   restoreHighlight: (h: Highlight) => post<Highlight>("/highlights/restore", h),
 
   notes: (bookId: number) => get<Note[]>(`/books/${bookId}/notes`),
+  search: (bookId: number, q: string) => get<{ hits: SearchHit[]; meaning: string }>(`/books/${bookId}/search?q=${encodeURIComponent(q)}`),
+  items: (bookId: number, q = "", kind = "") => get<BookItem[]>(`/books/${bookId}/items?q=${encodeURIComponent(q)}&kind=${kind}`),
+  progress: (bookId: number) => get<{ chapters: ChapterProgress[]; cardsDue: number; embed: { state: string; progress: number } }>(`/books/${bookId}/progress`),
+  cards: (bookId: number, due = false) => get<Card[]>(`/books/${bookId}/cards${due ? "?due=1" : ""}`),
+  cardsDue: () => get<{ bookId: number; n: number }[]>("/cards/due"),
+  addCard: (b: { bookId: number; front: string; back: string; pageIndex?: number | null }) => post<Card>("/cards", b),
+  reviewCard: (id: number, grade: "again" | "hard" | "good" | "easy") => post<Card>(`/cards/${id}/review`, { grade }),
+  patchCard: (id: number, p: { front?: string; back?: string }) => patch<Card>(`/cards/${id}`, p),
+  deleteCard: (id: number) => del<Card>(`/cards/${id}`),
   addNote: (b: { bookId: number; sessionId?: number | null; pageIndex?: number | null; body: string; source?: "user" | "ai" }) => post<Note>("/notes", b),
   patchNote: (id: number, p: { body?: string; pageIndex?: number | null }) => patch<Note>(`/notes/${id}`, p),
   deleteNote: (id: number) => del<Note>(`/notes/${id}`),

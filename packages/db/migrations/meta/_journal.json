@@ -15,6 +15,13 @@
       "when": 1790755768901,
       "tag": "0001_model_effort",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791046792908,
+      "tag": "0002_tutor_v3",
+      "breakpoints": true
     }
   ]
 }

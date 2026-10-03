@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Download, Plus, Trash2 } from "lucide-react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@marginalia/shared";
 import { api, type Chapter, type Note } from "../../lib/api";
 import { label, niceTitle, relTime } from "../../lib/format";
@@ -345,6 +345,22 @@ function NoteItem({ n }: { n: Note }) {
         <span className="spacer" />
         <button
           className="icon-btn side-del"
+          aria-label="Download as Markdown"
+          title="Download as Markdown"
+          onClick={() => {
+            const name = (n.title ?? `${book.title} p. ${n.pageIndex != null ? label(book.pageLabels, n.pageIndex) : "note"}`).replace(/[\\/:*?"<>|]+/g, " ").slice(0, 80);
+            const blob = new Blob([`${n.title ? `# ${n.title}\n\n` : ""}${n.body}\n`], { type: "text/markdown" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = `${name}.md`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+          }}
+        >
+          <Download size={13} />
+        </button>
+        <button
+          className="icon-btn side-del"
           aria-label="Delete note"
           onClick={async () => {
             useReader.setState({ notes: useReader.getState().notes.filter((x) => x.id !== n.id) });
@@ -383,6 +399,7 @@ function NoteItem({ n }: { n: Note }) {
         />
       ) : (
         <div className="side-note-body" onDoubleClick={() => setEdit(n.body)} title="Double-click to edit">
+          {n.title && <div className="side-note-title">{n.title}</div>}
           <Markdown onPage={(l) => useReader.getState().jumpLabel(l)}>{n.body}</Markdown>
           <button className="link small" onClick={() => setEdit(n.body)}>
             Edit

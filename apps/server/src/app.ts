@@ -2,13 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { books, workspaceDir, type Db } from "@marginalia/db";
-import { isNotNull } from "drizzle-orm";
+import { books, sessions, workspaceDir, type Db } from "@marginalia/db";
+import { eq, isNotNull } from "drizzle-orm";
 import { makeDescriber } from "./ai/activity";
 import { AgentEngine } from "./ai/agent";
 import type { ChatEngine } from "./ai/engine";
 import { MockEngine } from "./ai/mock";
 import { Indexer } from "./ingest/indexer";
+import { BookSearch } from "./services/search";
+import { studyRoutes } from "./routes/study";
 import { purgeBook } from "./ingest/import";
 import { libraryRoutes } from "./routes/library";
 import { readerRoutes } from "./routes/reader";
@@ -31,13 +33,19 @@ export type AppOptions = {
 export function createApp(opts: AppOptions) {
   const ws = new Workspace(workspaceDir(opts.dataDir));
   ws.ensure();
-  const indexer = new Indexer(opts.db, ws);
+  const indexer = new Indexer(opts.db, ws, opts.dataDir);
   const describe = makeDescriber(opts.db, ws);
   const engine: ChatEngine =
     (opts.engine ?? process.env.MARGINALIA_ENGINE) === "mock" ? new MockEngine(ws) : new AgentEngine(ws, describe);
-  const chat = new ChatService(opts.db, ws, engine);
-  const deps: Deps = { db: opts.db, ws, indexer, chat, engine, dataDir: opts.dataDir };
+  const search = new BookSearch(opts.db, opts.dataDir);
+  const chat = new ChatService(opts.db, ws, engine, search);
+  const deps: Deps = { db: opts.db, ws, indexer, chat, engine, search, dataDir: opts.dataDir };
 
+  // Sessions the student chose not to keep, left open when the app last closed.
+  for (const s of opts.db.select().from(sessions).where(eq(sessions.ephemeral, true)).all()) {
+    opts.db.delete(sessions).where(eq(sessions.id, s.id)).run();
+    ws.removeSessionFolder(s.folder);
+  }
   // Books deleted in a previous run are gone for good now.
   for (const b of opts.db.select().from(books).where(isNotNull(books.deletedAt)).all()) purgeBook(opts.db, ws, b.id);
   const legacy = opts.importLegacy === false ? null : importLegacy(opts.db, ws, indexer, opts.dataDir);
@@ -52,6 +60,7 @@ export function createApp(opts: AppOptions) {
   api.route("/", libraryRoutes(deps));
   api.route("/", readerRoutes(deps));
   api.route("/", sessionRoutes(deps));
+  api.route("/", studyRoutes(deps));
   api.notFound((c) => c.json({ error: "Not found" }, 404));
   app.route("/api", api);
 

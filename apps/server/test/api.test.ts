@@ -152,14 +152,19 @@ describe("sessions and the AI", () => {
     expect(r.text).toContain("On p. 143");
     const sent = t.mock.sent.at(-1)!;
     expect(sent.text).toContain("[Where I am]");
-    expect(sent.text).toContain("Viewing p. 143 (PDF 3, p0003.txt) and p. 144 (PDF 4, p0004.txt)");
-    expect(sent.text).toContain("Section: Part A");
+    expect(sent.text).toContain("Viewing p. 143 and p. 144");
+    expect(sent.text).toContain("Chapter: Part A — pp. 141–146 (p. 143 is page 3 of 6)");
+    // The page on screen travels with the message, so most questions need no lookup.
+    expect(sent.text).toContain("Text of p. 143");
+    expect(sent.text).toContain("Theorem 2. If f is continuous on [a, b], then f is bounded above");
     expect(sent.text).toContain('Selected on p. 143: “If f is continuous on [a, b]”');
     expect(sent.text).toContain("Asking about my highlight on p. 143");
     expect(sent.text).toContain("Read this session: pp. 142–143");
     expect(sent.text).toMatch(/Why does this need a closed interval\?$/);
     expect(sent.brief.systemPrompt).toContain("Goal: finish 7.2 exercises");
-    expect(sent.brief.systemPrompt).toContain("prefer hints and questions over answers");
+    expect(sent.brief.systemPrompt).toContain("hints and questions before answers");
+    expect(sent.brief).toMatchObject({ workspace: true, persist: true });
+    expect(sent.brief.bookTools).toBeTruthy();
     expect(sent.brief.resume).toBe(false);
     expect(sent.model).toBe("sonnet");
     const msgs = t.db.select().from(messages).where(eq(messages.sessionId, sessionId)).all();

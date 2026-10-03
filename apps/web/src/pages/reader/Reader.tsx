@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Columns2, Minus, MoreHorizontal, PanelLeft, PanelRight, Plus, Search } from "lucide-react";
 import { SESSION_TYPE_LABEL, type ChatEvent } from "@marginalia/shared";
-import { api } from "../../lib/api";
+import { api, type Session } from "../../lib/api";
 import { formatDuration, indexForInput, label, niceTitle, sectionFor } from "../../lib/format";
 import { go } from "../../lib/router";
 import { openPdf, PdfPasswordError } from "../../lib/pdf";
 import { streamEvents } from "../../lib/api";
-import { toast, useApp } from "../../state/app";
+import { toast, toastError, useApp } from "../../state/app";
 import { Dialog, EditableText, Menu } from "../../components/ui";
 import { Markdown } from "../../components/Markdown";
 import { SessionDetails } from "../../components/SessionDetails";
@@ -38,6 +38,18 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
   const storeSession = useReader((s) => s.session);
   const book = loaded && storeBook?.id === bookId ? storeBook : null;
   const session = book ? storeSession : null;
+  const aiOff = session?.ai === "off";
+  // A session the student chose not to keep is discarded when they leave the book.
+  const ephemeralId = session?.ephemeral ? session.id : null;
+  useEffect(() => {
+    if (ephemeralId == null) return;
+    const discard = () => void fetch(`/api/sessions/${ephemeralId}/end`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", keepalive: true }).catch(() => {});
+    window.addEventListener("pagehide", discard);
+    return () => {
+      window.removeEventListener("pagehide", discard);
+      if (useReader.getState().session?.id === ephemeralId || !useReader.getState().session) discard();
+    };
+  }, [ephemeralId]);
   const layout = useReader((s) => s.layout);
   const setLayout = useReader((s) => s.setLayout);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +65,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
       /* ignore */
     }
   };
-  const [ending, setEnding] = useState<null | { summary: string; done: boolean; error: string | null }>(null);
+  const [ending, setEnding] = useState<null | { summary: string; done: boolean; error: string | null; next?: Session["next"]; type?: Session["type"] }>(null);
 
   // ---------- Load book, session, highlights, notes and the PDF ----------
   const alive = useRef(true);
@@ -188,9 +200,17 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
       }
       if (e.type === "error") err = e.message;
     });
+    if (s.ephemeral) {
+      // Not kept: it's gone now.
+      useReader.setState({ session: null });
+      toast({ text: "Session ended and discarded. Your reading time still counts." });
+      setEnding(null);
+      go({ name: "book", bookId: s.bookId });
+      return;
+    }
     const d = await api.session(s.id).catch(() => null);
     if (d) useReader.setState({ session: d.session });
-    setEnding({ summary: d?.session.summary ?? text, done: true, error: err });
+    setEnding({ summary: d?.session.summary ?? text, done: true, error: err, next: d?.session.next ?? null, type: s.type });
   }, []);
 
   // ---------- Keyboard ----------
@@ -374,16 +394,18 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
               { label: "Reset layout", onSelect: () => setLayout(DEFAULT_LAYOUT) },
             ]}
           />
-          <button className={`icon-btn${layout.claude ? " on" : ""}`} onClick={() => setLayout({ claude: !layout.claude })} aria-label="Toggle Claude" aria-pressed={layout.claude} title="Claude ( ] )">
-            <PanelRight size={17} />
-          </button>
+          {!aiOff && (
+            <button className={`icon-btn${layout.claude ? " on" : ""}`} onClick={() => setLayout({ claude: !layout.claude })} aria-label="Toggle Claude" aria-pressed={layout.claude} title="Claude ( ] )">
+              <PanelRight size={17} />
+            </button>
+          )}
         </div>
       </header>
 
-      <div className={`reader-body${layout.sidebar ? " with-side" : ""}${layout.claude ? " with-claude" : ""}`}>
+      <div className={`reader-body${layout.sidebar ? " with-side" : ""}${layout.claude && !aiOff ? " with-claude" : ""}`}>
         {layout.sidebar && book && <Sidebar />}
         <main className="reader-main">{book && <Viewer startPage={startPage ?? book.lastPage} onScale={(value, s) => setScale({ value, pct: Math.round(s * 100) })} />}</main>
-        {layout.claude && book && (
+        {layout.claude && book && !aiOff && (
           <>
             <div className="claude-resize" onPointerDown={startDrag} onPointerMove={onDrag} onPointerUp={() => (dragging.current = false)} role="separator" aria-orientation="vertical" aria-label="Resize Claude panel" />
             <ClaudePanel onEnd={endSession} />
@@ -404,6 +426,36 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
               <span className="muted">Claude is writing a short summary…</span>
             )}
           </div>
+          {ending.done && ending.next && (
+            <div className="next-up">
+              <div>
+                <div className="up-kicker">Next up</div>
+                <div>
+                  <b>{ending.next.label}</b> — {ending.next.why}
+                </div>
+              </div>
+              <button
+                className="btn primary"
+                onClick={async () => {
+                  const n = ending.next!;
+                  try {
+                    const s = await api.startSession(bookId, { name: n.label, type: ending.type ?? "first_read", scopeFrom: n.from, scopeTo: n.to, scopeLabel: n.label, ai: "tutor", ephemeral: false });
+                    try {
+                      sessionStorage.setItem(`marginalia.plan.${s.id}`, "1");
+                    } catch {
+                      /* private mode */
+                    }
+                    setEnding(null);
+                    go({ name: "read", bookId, sessionId: s.id, page: n.from });
+                  } catch (e) {
+                    toastError(e);
+                  }
+                }}
+              >
+                Start it
+              </button>
+            </div>
+          )}
           {ending.done && (
             <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
               <button className="btn" onClick={() => setEnding(null)}>

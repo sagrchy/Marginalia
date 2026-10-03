@@ -17,6 +17,7 @@
     "@marginalia/shared": "workspace:*",
     "katex": "^0.18.9",
     "lucide-react": "^1.48.0",
+    "mermaid": "^12.1.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

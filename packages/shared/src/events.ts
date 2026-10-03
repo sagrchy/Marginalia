@@ -10,6 +10,12 @@ export type ChatEvent =
   | { type: "memory"; memories: { id: number; text: string }[] }
   | { type: "usage"; usage: TurnUsage }
   | { type: "limits"; limits: PlanLimit[] }
+  /** A tool took the student somewhere: open this page and mark the quote. */
+  | { type: "show"; pageIndex: number; quote: string | null }
+  /** Claude saved something to the student's notes. */
+  | { type: "note"; noteId: number; title: string | null }
+  /** Claude added flashcards to the book's deck. */
+  | { type: "cards"; count: number }
   | { type: "done"; assistantMessageId: number }
   | { type: "error"; kind: ErrorKind; message: string; retryable: boolean };
 

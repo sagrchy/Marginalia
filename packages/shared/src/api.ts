@@ -38,13 +38,41 @@ export const BookPatch = z
   .partial();
 export type BookPatch = z.infer<typeof BookPatch>;
 
+export const SESSION_AI = ["tutor", "plain", "off"] as const;
+export const SessionAi = z.enum(SESSION_AI);
+export type SessionAi = z.infer<typeof SessionAi>;
+export const SESSION_AI_LABEL: Record<SessionAi, string> = { tutor: "Tutor", plain: "Plain chat", off: "No AI" };
+
+const pageIdx = z.number().int().nonnegative();
+
 export const SessionBody = z.object({
   name: z.string().trim().min(1).max(120),
   goal: z.string().trim().max(500).optional().nullable(),
   type: SessionType.default("first_read"),
   timeboxMin: z.number().int().positive().max(600).optional().nullable(),
+  /** What the session covers (PDF page indices, inclusive) and how to call it ("Chapter 22", "pp. 445–460"). */
+  scopeFrom: pageIdx.optional().nullable(),
+  scopeTo: pageIdx.optional().nullable(),
+  scopeLabel: z.string().trim().max(200).optional().nullable(),
+  /** tutor: Claude with the book; plain: Claude without book context; off: reading only. */
+  ai: SessionAi.default("tutor"),
+  /** Not kept: deleted when it ends, Claude Code doesn't save it. */
+  ephemeral: z.boolean().default(false),
 });
-export const SessionPatch = SessionBody.partial();
+export type SessionBody = z.infer<typeof SessionBody>;
+/** Explicit, so defaults never overwrite fields a patch leaves out. */
+export const SessionPatch = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    goal: z.string().trim().max(500).nullable(),
+    type: SessionType,
+    timeboxMin: z.number().int().positive().max(600).nullable(),
+    scopeFrom: pageIdx.nullable(),
+    scopeTo: pageIdx.nullable(),
+    scopeLabel: z.string().trim().max(200).nullable(),
+    plan: z.string().max(8000).nullable(),
+  })
+  .partial();
 
 /** Where the reader is when a message is sent — the "where I am" header is built from this. */
 export const ViewState = z.object({
@@ -61,9 +89,16 @@ export type ViewState = z.infer<typeof ViewState>;
 export const ChatBody = z.object({
   text: z.string().trim().min(1).max(20000),
   view: ViewState,
+  /** quick: answer from what's attached, no lookups · normal · deep: thorough, more lookups, higher effort. */
+  mode: z.enum(["quick", "normal", "deep"]).default("normal"),
   /** Model and effort for this message (the chat's picker); settings' defaults when absent. */
   model: z.string().min(1).max(80).optional(),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+  /** Captured regions of the page (base64, without the data: prefix). */
+  images: z
+    .array(z.object({ mediaType: z.enum(["image/png", "image/jpeg"]), data: z.string().max(7_000_000) }))
+    .max(3)
+    .optional(),
 });
 export type ChatBody = z.infer<typeof ChatBody>;
 

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, BookOpen, MoreHorizontal, Play, Plus, Trash2 } from "lucide-react";
-import { SESSION_TYPE_LABEL, SESSION_TYPES, type SessionType } from "@marginalia/shared";
-import { api, streamEvents, type BookDetail, type Session } from "../lib/api";
-import { formatDuration, indexForInput, label, niceTitle, relTime, sectionFor, fmtBytes } from "../lib/format";
+import { ArrowLeft, BookOpen, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { SESSION_AI_LABEL, SESSION_TYPE_LABEL } from "@marginalia/shared";
+import { api, streamEvents, type BookDetail, type ChapterProgress, type Session } from "../lib/api";
+import { formatDuration, indexForInput, label, niceTitle, relTime, fmtBytes } from "../lib/format";
+import { StartSession, type Scope } from "../components/StartSession";
+import { Review } from "../components/Review";
 import { go } from "../lib/router";
 import { toast, toastError, useApp } from "../state/app";
 import { Dialog, EditableText, Menu } from "../components/ui";
@@ -15,16 +17,19 @@ export function BookPage({ bookId }: { bookId: number }) {
   const subjects = useApp((s) => s.subjects);
   const [book, setBook] = useState<BookDetail | null>(null);
   const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [progress, setProgress] = useState<{ chapters: ChapterProgress[]; cardsDue: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [starting, setStarting] = useState<Scope | "default" | null>(null);
+  const [reviewing, setReviewing] = useState(false);
   const [ending, setEnding] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<Session | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [b, s] = await Promise.all([api.book(bookId), api.sessions(bookId)]);
+      const [b, s, p] = await Promise.all([api.book(bookId), api.sessions(bookId), api.progress(bookId).catch(() => null)]);
       setBook(b);
       setSessions(s);
+      setProgress(p);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -41,6 +46,9 @@ export function BookPage({ bookId }: { bookId: number }) {
   const open = sessions?.filter((s) => s.status === "open") ?? [];
   const earlier = sessions?.filter((s) => s.status !== "open") ?? [];
   const totalMs = sessions?.reduce((n, s) => n + s.readingMs, 0) ?? 0;
+  // The most recent ended session's suggestion, unless a session has started since.
+  const lastEnded = earlier.find((s) => s.next);
+  const nextUp = lastEnded && !open.length && (!sessions?.[0] || sessions[0].id === lastEnded.id) ? lastEnded.next : null;
 
   const end = async (s: Session) => {
     setEnding(s.id);
@@ -62,6 +70,9 @@ export function BookPage({ bookId }: { bookId: number }) {
     );
   if (!book || !sessions) return <div className="empty">Loading…</div>;
 
+  const pct = Math.round(((book.lastPage + 1) / Math.max(1, book.pageCount)) * 100);
+  const started = (s: Session) => go({ name: "read", bookId: book.id, sessionId: s.id, page: s.scopeFrom ?? null });
+
   return (
     <div className="bookpage">
       <header className="topbar">
@@ -70,10 +81,10 @@ export function BookPage({ bookId }: { bookId: number }) {
         </button>
         <span className="truncate muted">Library</span>
         <span className="spacer" />
-        <button className="btn" onClick={() => go({ name: "read", bookId, sessionId: null, page: null })}>
-          <BookOpen size={15} /> Read without a session
+        <button className="btn" onClick={() => go({ name: "read", bookId, sessionId: null, page: null })} title="Open the book without starting a session">
+          <BookOpen size={15} /> Read
         </button>
-        <button className="btn primary" onClick={() => setStarting(true)}>
+        <button className="btn primary" onClick={() => setStarting("default")}>
           <Plus size={15} /> New session
         </button>
       </header>
@@ -102,7 +113,7 @@ export function BookPage({ bookId }: { bookId: number }) {
                 }}
               />
             )}
-            <div className="row small muted" style={{ flexWrap: "wrap", marginTop: 8 }}>
+            <div className="row small muted hero-meta">
               <select
                 className="select subject-select"
                 value={book.subjectId}
@@ -119,7 +130,7 @@ export function BookPage({ bookId }: { bookId: number }) {
                 ))}
               </select>
               <span>
-                {book.pageCount} pages · on p. {label(book.pageLabels, book.lastPage)} ({Math.round(((book.lastPage + 1) / Math.max(1, book.pageCount)) * 100)}%)
+                p. {label(book.pageLabels, book.lastPage)} of {book.pageCount} · {pct}%
               </span>
               {totalMs > 0 && <span>· {formatDuration(totalMs)} studied</span>}
             </div>
@@ -127,37 +138,106 @@ export function BookPage({ bookId }: { bookId: number }) {
           </div>
         </section>
 
-        {starting && <StartSession book={book} count={sessions.length} onClose={() => setStarting(false)} />}
+        {(open[0] || nextUp || (progress?.cardsDue ?? 0) > 0) && (
+          <section className="up-next">
+            {open[0] ? (
+              <button className="up-card primary-card" onClick={() => started(open[0])}>
+                <span className="up-kicker">Continue</span>
+                <span className="up-title truncate">{open[0].name}</span>
+                <span className="small muted">
+                  {open[0].scopeText ?? "No fixed scope"}
+                  {open[0].scopeRead != null && open[0].scopeFrom != null ? ` · ${open[0].scopeRead} of ${open[0].scopeTo! - open[0].scopeFrom + 1} pages read` : ""}
+                </span>
+              </button>
+            ) : nextUp ? (
+              <button className="up-card primary-card" onClick={() => setStarting({ from: nextUp.from, to: nextUp.to, label: nextUp.label })}>
+                <span className="up-kicker">Next up · suggested by Claude</span>
+                <span className="up-title">{nextUp.label}</span>
+                <span className="small muted">{nextUp.why}</span>
+              </button>
+            ) : null}
+            {(progress?.cardsDue ?? 0) > 0 && (
+              <button className="up-card" onClick={() => setReviewing(true)}>
+                <span className="up-kicker">Review</span>
+                <span className="up-title">
+                  {progress!.cardsDue} card{progress!.cardsDue === 1 ? "" : "s"} due
+                </span>
+                <span className="small muted">A few minutes of recall keeps it from fading</span>
+              </button>
+            )}
+          </section>
+        )}
 
-        {open.length > 0 && (
+        <div className="book-grid">
           <section>
-            <h2 className="section-title" style={{ marginBottom: 10 }}>
-              Open sessions
-            </h2>
+            <h2 className="section-title">Sessions</h2>
+            {sessions.length === 0 && (
+              <button className="empty-cta" onClick={() => setStarting("default")}>
+                Start your first session — pick a chapter, and Claude will study it with you.
+              </button>
+            )}
             <div className="sessions">
               {open.map((s) => (
                 <SessionCard key={s.id} s={s} book={book} ending={ending === s.id} onEnd={() => end(s)} onDelete={() => setDeleting(s)} onChange={load} />
               ))}
-            </div>
-          </section>
-        )}
-
-        {earlier.length > 0 && (
-          <section style={{ marginTop: 28 }}>
-            <h2 className="section-title" style={{ marginBottom: 10 }}>
-              Earlier sessions
-            </h2>
-            <div className="sessions">
               {earlier.map((s) => (
                 <SessionCard key={s.id} s={s} book={book} ending={false} onEnd={() => {}} onDelete={() => setDeleting(s)} onChange={load} />
               ))}
             </div>
           </section>
-        )}
+
+          {progress && progress.chapters.length > 0 && (
+            <section>
+              <h2 className="section-title">Chapters</h2>
+              <div className="chapter-map" role="list">
+                {progress.chapters.map((c) => {
+                  const done = c.pagesRead / c.pages;
+                  return (
+                    <button
+                      key={c.from}
+                      role="listitem"
+                      className="chapter-row"
+                      onClick={() => setStarting({ from: c.from, to: c.to, label: niceTitle(c.title) })}
+                      title={`Study ${niceTitle(c.title)}`}
+                    >
+                      <span className="chapter-title truncate">{niceTitle(c.title)}</span>
+                      <span className="chapter-meta small muted">
+                        {c.fromLabel}–{c.toLabel}
+                      </span>
+                      <span className={`chapter-bar${done >= 0.9 ? " full" : ""}`} aria-label={`${c.pagesRead} of ${c.pages} pages read`}>
+                        <i style={{ width: `${Math.round(done * 100)}%` }} />
+                      </span>
+                      <span className="chapter-flags small muted">
+                        {c.cardsDue > 0 && <span title={`${c.cardsDue} flashcards due`}>{c.cardsDue} due</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
 
         <BookDetails book={book} onChange={load} />
       </main>
 
+      {starting && (
+        <Dialog title="New session" onClose={() => setStarting(null)} width={540}>
+          <StartSession book={book} page={book.lastPage} initial={starting === "default" ? undefined : starting} compact onStarted={started} onCancel={() => setStarting(null)} />
+        </Dialog>
+      )}
+      {reviewing && (
+        <Review
+          bookId={book.id}
+          title={book.title}
+          labels={book.pageLabels}
+          onClose={() => {
+            setReviewing(false);
+            void load();
+          }}
+          onPage={(p) => go({ name: "read", bookId: book.id, sessionId: null, page: p })}
+        />
+      )}
       {deleting && (
         <Dialog title="Delete this session?" onClose={() => setDeleting(null)}>
           <p>
@@ -242,81 +322,6 @@ function TextStatus({ book, onChange }: { book: BookDetail; onChange: () => void
   return null;
 }
 
-function StartSession({ book, count, onClose }: { book: BookDetail; count: number; onClose: () => void }) {
-  const where = sectionFor(book.chapters, book.lastPage);
-  const suggested = niceTitle(where.section ?? where.chapter ?? `Session ${count + 1}`);
-  const [name, setName] = useState(suggested);
-  const [goal, setGoal] = useState("");
-  const [type, setType] = useState<SessionType>("first_read");
-  const [box, setBox] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
-  return (
-    <form
-      className="card start-card fade"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        try {
-          const s = await api.startSession(book.id, { name: name.trim() || suggested, goal: goal.trim() || null, type, timeboxMin: box });
-          go({ name: "read", bookId: book.id, sessionId: s.id, page: null });
-        } catch (err) {
-          toastError(err);
-          setBusy(false);
-        }
-      }}
-    >
-      <div className="row" style={{ marginBottom: 12 }}>
-        <h2 className="h2">New session</h2>
-        <span className="spacer" />
-        <span className="muted small">starts at p. {label(book.pageLabels, book.lastPage)}</span>
-      </div>
-      <div className="start-grid">
-        <div className="field">
-          <label className="label" htmlFor="s-name">
-            Name
-          </label>
-          <input id="s-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label className="label" htmlFor="s-goal">
-            Goal <span className="muted">(optional — Claude keeps it in mind)</span>
-          </label>
-          <input id="s-goal" className="input" value={goal} onChange={(e) => setGoal(e.target.value)} />
-        </div>
-      </div>
-      <div className="row" style={{ flexWrap: "wrap", gap: 16 }}>
-        <div>
-          <div className="label">Kind of session</div>
-          <div className="seg" role="radiogroup" aria-label="Kind of session">
-            {SESSION_TYPES.map((t) => (
-              <button type="button" role="radio" aria-checked={type === t} key={t} className={type === t ? "on" : ""} onClick={() => setType(t)}>
-                {SESSION_TYPE_LABEL[t]}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <div className="label">Time box</div>
-          <div className="seg" role="radiogroup" aria-label="Time box">
-            {[null, 25, 45, 60, 90].map((m) => (
-              <button type="button" role="radio" aria-checked={box === m} key={String(m)} className={box === m ? "on" : ""} onClick={() => setBox(m)}>
-                {m ? `${m} min` : "None"}
-              </button>
-            ))}
-          </div>
-        </div>
-        <span className="spacer" />
-        <button type="button" className="btn" onClick={onClose}>
-          Cancel
-        </button>
-        <button className="btn primary" disabled={busy}>
-          <Play size={14} /> Start
-        </button>
-      </div>
-    </form>
-  );
-}
-
 function SessionCard({ s, book, ending, onEnd, onDelete, onChange }: { s: Session; book: BookDetail; ending: boolean; onEnd: () => void; onDelete: () => void; onChange: () => void }) {
   const [showSummary, setShowSummary] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -340,7 +345,7 @@ function SessionCard({ s, book, ending, onEnd, onDelete, onChange }: { s: Sessio
             onChange();
           }}
         />
-        <span className="chip">{SESSION_TYPE_LABEL[s.type]}</span>
+        {s.ai === "tutor" ? <span className="chip">{SESSION_TYPE_LABEL[s.type]}</span> : <span className="chip">{SESSION_AI_LABEL[s.ai]}</span>}
         {s.legacy && <span className="chip" title="Imported from the previous version of Marginalia">from v1</span>}
         <span className="spacer" />
         {s.status === "open" && !s.legacy && (
@@ -382,9 +387,15 @@ function SessionCard({ s, book, ending, onEnd, onDelete, onChange }: { s: Sessio
       </div>
       {s.goal && <div className="session-goal">Goal: {s.goal}</div>}
       <div className="muted small row" style={{ flexWrap: "wrap", gap: "2px 12px", marginTop: 4 }}>
+        {s.scopeText && (
+          <span>
+            {s.scopeText}
+            {s.scopeRead != null && s.scopeFrom != null ? ` (${s.scopeRead}/${s.scopeTo! - s.scopeFrom + 1} read)` : ""}
+          </span>
+        )}
         <span title={new Date(s.lastActiveAt).toLocaleString()}>{relTime(s.lastActiveAt)}</span>
         {s.readingMs > 0 && <span>{formatDuration(s.readingMs)} reading</span>}
-        {pages && <span>{pages}</span>}
+        {pages && !s.scopeText && <span>{pages}</span>}
         {s.questions > 0 && <span>{s.questions} question{s.questions === 1 ? "" : "s"}</span>}
         {s.highlightCount > 0 && <span>{s.highlightCount} highlight{s.highlightCount === 1 ? "" : "s"}</span>}
         <button className="link small" style={{ marginTop: 0 }} onClick={() => setShowDetails((v) => !v)} aria-expanded={showDetails}>
