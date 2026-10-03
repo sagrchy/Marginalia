@@ -91,7 +91,10 @@ export class Indexer {
         continue;
       }
       if (b.indexState !== "ready") continue;
-      if (b.ocrState === "pending" || b.ocrState === "running") {
+      // Books imported before OCR existed get their scanned pages recognised once.
+      const scanned = b.ocrState === "none" && b.emptyPages + b.garbledPages > 0;
+      if (this.ocr && (scanned || b.ocrState === "pending" || b.ocrState === "running")) {
+        if (scanned) this.db.update(books).set({ ocrState: "pending", ocrProgress: 0 }).where(eq(books.id, b.id)).run();
         this.enqueueOcr(b.id);
         continue;
       }
