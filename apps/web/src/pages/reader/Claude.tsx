@@ -44,6 +44,7 @@ function QuickStart() {
 function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
   const book = useReader((s) => s.book)!;
   const ask = useReader((s) => s.ask);
+  const captures = useReader((s) => s.captures);
   const settings = useApp((s) => s.settings)!;
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -240,6 +241,8 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
 
   const send = async (text: string) => {
     let t = text.trim();
+    const shots = useReader.getState().captures;
+    if (!t && shots.length) t = "What is this, and how does it fit in?";
     if (!t || busy.current) return;
     if (/^\/[a-z]+(\s|$)/i.test(t)) return void runCommand(t).catch(toastError);
     const st = useReader.getState();
@@ -251,7 +254,7 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
       setTeach(false);
     }
     setDraft("");
-    useReader.setState({ ask: null });
+    useReader.setState({ ask: null, captures: [] });
     await stream(
       `/sessions/${session.id}/chat`,
       {
@@ -259,10 +262,12 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
         mode: plain ? "normal" : mode,
         model: choice.model,
         effort: choice.effort ?? undefined,
+        images: shots.length ? shots.map((c) => ({ mediaType: "image/png", data: c.dataUrl.slice(c.dataUrl.indexOf(",") + 1) })) : undefined,
         view: { visiblePages: visible.length ? visible : [st.page], selection: a ? { text: a.text.slice(0, 8000), pageIndex: a.pageIndex } : null, highlightId: a?.highlightId ?? null },
       },
-      { text: t, pageIndex: visible[0] ?? st.page, selection: a?.text ?? null },
+      { text: t, pageIndex: shots[0]?.pageIndex ?? visible[0] ?? st.page, selection: a?.text ?? (shots.length ? "(a captured region of the page)" : null) },
       () => {
+        if (shots.length) useReader.setState({ captures: shots });
         setDraft((d) => d || text.trim());
         if (wasTeach) setTeach(true);
         if (a) useReader.setState({ ask: a });
@@ -458,6 +463,18 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
               </button>
             </div>
           )}
+          {captures.length > 0 && (
+            <div className="capture-chips">
+              {captures.map((c, i) => (
+                <div key={i} className="capture-chip" title={`Captured from p. ${label(book.pageLabels, c.pageIndex)}`}>
+                  <img src={c.dataUrl} alt={`Captured region of p. ${label(book.pageLabels, c.pageIndex)}`} />
+                  <button className="icon-btn" aria-label="Remove capture" onClick={() => useReader.setState({ captures: captures.filter((_, j) => j !== i) })}>
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="composer">
             {/^\/\w*$/.test(draft) && (
               <CommandHints
@@ -472,7 +489,7 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
               ref={input}
               rows={1}
               className="composer-input"
-              placeholder={teach ? `Explain ${scopeName === "this chapter" ? "the idea" : scopeName} in your own words…` : ask ? "Ask about the selection…" : plain ? "Message Claude…" : "Ask Claude…"}
+              placeholder={captures.length ? "Ask about the captured region…" : teach ? `Explain ${scopeName === "this chapter" ? "the idea" : scopeName} in your own words…` : ask ? "Ask about the selection…" : plain ? "Message Claude…" : "Ask Claude…"}
               value={draft}
               aria-label="Message Claude"
               onChange={(e) => setDraft(e.target.value)}
@@ -521,7 +538,7 @@ function Chat({ session, onEnd }: { session: Session; onEnd: () => void }) {
                   <Square size={12} fill="currentColor" />
                 </button>
               ) : (
-                <button className="send" onClick={() => void send(draft)} disabled={!draft.trim()} aria-label="Send" title="Send (Enter)">
+                <button className="send" onClick={() => void send(draft)} disabled={!draft.trim() && !captures.length} aria-label="Send" title="Send (Enter)">
                   <ArrowUp size={16} />
                 </button>
               )}

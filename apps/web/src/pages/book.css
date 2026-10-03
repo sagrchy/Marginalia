@@ -245,3 +245,21 @@
     grid-template-columns: 1fr;
   }
 }
+.book-brief {
+  margin-top: 10px;
+  max-width: 640px;
+  color: var(--ink-2);
+}
+.book-brief .md {
+  font-size: 15px;
+}
+.sum-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.prep-status {
+  white-space: nowrap;
+}

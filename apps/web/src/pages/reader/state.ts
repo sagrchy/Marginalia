@@ -32,6 +32,10 @@ type ReaderState = {
   findOpen: boolean;
   /** Highlight whose popover is open (from a click on the page or the sidebar). */
   activeHighlight: { id: number; x: number; y: number; editNote?: boolean } | null;
+  /** Drawing a box on the page to capture it as an image for Claude. */
+  capturing: boolean;
+  /** Captured regions waiting to be sent with the next message. */
+  captures: { pageIndex: number; dataUrl: string }[];
   layout: Layout;
   set: (p: Partial<ReaderState>) => void;
   setLayout: (p: Partial<Layout>) => void;
@@ -54,6 +58,8 @@ export const useReader = create<ReaderState>((set, get) => ({
   back: null,
   findOpen: false,
   activeHighlight: null,
+  capturing: false,
+  captures: [],
   layout: loadLayout(),
   set: (p) => set(p),
   setLayout: (p) => {
@@ -84,5 +90,5 @@ export const useReader = create<ReaderState>((set, get) => ({
 }));
 
 export function resetReader() {
-  useReader.setState({ book: null, pdf: null, view: null, page: 0, session: null, highlights: [], notes: [], ask: null, back: null, findOpen: false, activeHighlight: null });
+  useReader.setState({ book: null, pdf: null, view: null, page: 0, session: null, highlights: [], notes: [], ask: null, back: null, findOpen: false, activeHighlight: null, capturing: false, captures: [] });
 }

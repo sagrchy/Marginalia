@@ -94,6 +94,14 @@ export class MockEngine implements ChatEngine {
   async contextUsage(id: number) {
     return this.live.has(id) ? { tokens: 18_000, max: 200_000, percentage: 9 } : null;
   }
+  public completions: string[] = [];
+  async complete(prompt: string, opts: { model: string }) {
+    this.completions.push(prompt);
+    const title = /Chapter: “([^”]+)”/.exec(prompt)?.[1];
+    const text = title ? `${title} introduces its main ideas, defines its key terms (p. 1) and proves its central results.` : "A short book about its subject, for readers with some background; chapters build on one another.";
+    return { text, usage: { ...emptyUsage(), inputTokens: Math.round(prompt.length / 4), outputTokens: 60, costUsd: 0.001 }, model: opts.model };
+  }
+
   async models() {
     return FALLBACK_MODELS;
   }

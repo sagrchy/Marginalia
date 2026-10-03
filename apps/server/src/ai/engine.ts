@@ -48,6 +48,8 @@ export interface ChatEngine {
   planUsage(): Promise<{ rows: PlanRow[]; at: number } | null>;
   /** The models this Claude Code offers, newest of each family first. */
   models(): Promise<ModelOption[]>;
+  /** A one-off prompt outside any session (no tools, not saved): used for book preparation. */
+  complete(prompt: string, opts: { model: string; effort: Effort | null; system?: string }): Promise<{ text: string; usage: TurnUsage; model: string }>;
   /** Which Claude Code runs the sessions. */
   runtime(): { executable: string | null; version: string | null };
   shutdown(): void;

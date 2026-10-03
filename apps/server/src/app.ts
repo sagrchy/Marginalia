@@ -11,6 +11,7 @@ import { MockEngine } from "./ai/mock";
 import { Indexer } from "./ingest/indexer";
 import { BookSearch } from "./services/search";
 import { studyRoutes } from "./routes/study";
+import { BookPrep } from "./services/prepare";
 import { purgeBook } from "./ingest/import";
 import { libraryRoutes } from "./routes/library";
 import { readerRoutes } from "./routes/reader";
@@ -39,7 +40,8 @@ export function createApp(opts: AppOptions) {
     (opts.engine ?? process.env.MARGINALIA_ENGINE) === "mock" ? new MockEngine(ws) : new AgentEngine(ws, describe);
   const search = new BookSearch(opts.db, opts.dataDir);
   const chat = new ChatService(opts.db, ws, engine, search);
-  const deps: Deps = { db: opts.db, ws, indexer, chat, engine, search, dataDir: opts.dataDir };
+  const prep = new BookPrep(opts.db, engine);
+  const deps: Deps = { db: opts.db, ws, indexer, chat, engine, search, prep, dataDir: opts.dataDir };
 
   // Sessions the student chose not to keep, left open when the app last closed.
   for (const s of opts.db.select().from(sessions).where(eq(sessions.ephemeral, true)).all()) {

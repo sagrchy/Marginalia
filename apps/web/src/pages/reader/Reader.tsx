@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Columns2, Minus, MoreHorizontal, PanelLeft, PanelRight, Plus, Search } from "lucide-react";
+import { ArrowLeft, Columns2, Minus, MoreHorizontal, PanelLeft, PanelRight, Plus, ScanSearch, Search } from "lucide-react";
 import { SESSION_TYPE_LABEL, type ChatEvent } from "@marginalia/shared";
 import { api, type Session } from "../../lib/api";
 import { formatDuration, indexForInput, label, niceTitle, sectionFor } from "../../lib/format";
@@ -39,6 +39,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
   const book = loaded && storeBook?.id === bookId ? storeBook : null;
   const session = book ? storeSession : null;
   const aiOff = session?.ai === "off";
+  const capturing = useReader((s) => s.capturing);
   // A session the student chose not to keep is discarded when they leave the book.
   const ephemeralId = session?.ephemeral ? session.id : null;
   useEffect(() => {
@@ -56,6 +57,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
   const [needPassword, setNeedPassword] = useState<null | { wrong: boolean }>(null);
   const [scale, setScale] = useState<{ value: string; pct: number }>({ value: "auto", pct: 100 });
   const [viewLayout, setViewLayout] = useState<LayoutId>(() => savedLayout(bookId));
+  const changeLayoutRef = useRef<(id: LayoutId) => void>(() => {});
   const changeLayout = (id: LayoutId) => {
     setViewLayout(id);
     useReader.getState().view?.setLayout(id);
@@ -65,6 +67,7 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
       /* ignore */
     }
   };
+  changeLayoutRef.current = changeLayout;
   const [ending, setEnding] = useState<null | { summary: string; done: boolean; error: string | null; next?: Session["next"]; type?: Session["type"] }>(null);
 
   // ---------- Load book, session, highlights, notes and the PDF ----------
@@ -241,7 +244,8 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
         return;
       }
       if (isTyping() || mod || e.altKey) return;
-      if (e.key === "[") st.setLayout({ sidebar: !st.layout.sidebar });
+      if (e.key === "c" && st.session?.ai !== "off") st.set({ capturing: !st.capturing });
+      else if (e.key === "[") st.setLayout({ sidebar: !st.layout.sidebar });
       else if (e.key === "]") st.setLayout({ claude: !st.layout.claude });
       else if (e.key === "Escape") {
         if (st.findOpen) st.set({ findOpen: false });
@@ -263,6 +267,8 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
     () => [
       { id: "r-side", group: "Reader", title: "Toggle sidebar", hint: "[", run: () => useReader.getState().setLayout({ sidebar: !useReader.getState().layout.sidebar }) },
       { id: "r-claude", group: "Reader", title: "Toggle Claude panel", hint: "]", run: () => useReader.getState().setLayout({ claude: !useReader.getState().layout.claude }) },
+      { id: "r-capture", group: "Reader", title: "Capture a region for Claude", hint: "C", run: () => useReader.getState().set({ capturing: true }) },
+      ...LAYOUTS.map((l) => ({ id: `r-layout-${l.id}`, group: "Reader", title: `Page layout: ${l.label}`, run: () => changeLayoutRef.current(l.id) })),
       { id: "r-ask", group: "Reader", title: "Ask Claude", hint: "Ctrl J", run: () => (useReader.getState().setLayout({ claude: true }), setTimeout(() => window.dispatchEvent(new Event("marginalia:focus-claude")), 0)) },
       { id: "r-find", group: "Reader", title: "Find in book", hint: "Ctrl F", run: () => useReader.getState().set({ findOpen: true }) },
       { id: "r-contents", group: "Reader", title: "Show contents", run: () => useReader.getState().setLayout({ sidebar: true, sidebarTab: "contents" }) },
@@ -377,6 +383,17 @@ export function Reader({ bookId, sessionId, startPage }: { bookId: number; sessi
 
         <div className="bar-group bar-right">
           {session && <SessionPill readMs={readMs} onEnd={endSession} />}
+          {!aiOff && (
+            <button
+              className={`icon-btn${capturing ? " on" : ""}`}
+              aria-label="Capture a region for Claude"
+              aria-pressed={capturing}
+              title="Capture a figure, formula or passage to ask Claude about (C)"
+              onClick={() => useReader.getState().set({ capturing: !capturing })}
+            >
+              <ScanSearch size={16} />
+            </button>
+          )}
           <button className="icon-btn" aria-label="Find in book" title="Find (Ctrl+F)" onClick={() => useReader.getState().set({ findOpen: true })}>
             <Search size={16} />
           </button>

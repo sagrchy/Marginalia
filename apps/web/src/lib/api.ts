@@ -275,6 +275,10 @@ export const api = {
   search: (bookId: number, q: string) => get<{ hits: SearchHit[]; meaning: string }>(`/books/${bookId}/search?q=${encodeURIComponent(q)}`),
   items: (bookId: number, q = "", kind = "") => get<BookItem[]>(`/books/${bookId}/items?q=${encodeURIComponent(q)}&kind=${kind}`),
   progress: (bookId: number) => get<{ chapters: ChapterProgress[]; cardsDue: number; embed: { state: string; progress: number } }>(`/books/${bookId}/progress`),
+  prepStatus: (bookId: number) =>
+    get<{ running: boolean; done: number; total: number; current: string | null; error: string | null; brief: string | null; plan: { chapters: number; todo: number; tokens: number; brief: boolean } | null }>(`/books/${bookId}/prepare`),
+  prepStart: (bookId: number) => post(`/books/${bookId}/prepare`, {}),
+  prepCancel: (bookId: number) => post(`/books/${bookId}/prepare/cancel`),
   cards: (bookId: number, due = false) => get<Card[]>(`/books/${bookId}/cards${due ? "?due=1" : ""}`),
   cardsDue: () => get<{ bookId: number; n: number }[]>("/cards/due"),
   addCard: (b: { bookId: number; front: string; back: string; pageIndex?: number | null }) => post<Card>("/cards", b),

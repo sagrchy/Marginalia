@@ -351,6 +351,40 @@ export class AgentEngine implements ChatEngine {
     }
   }
 
+  async complete(prompt: string, opts: { model: string; effort: Effort | null; system?: string }) {
+    const q = query({
+      prompt,
+      options: {
+        ...this.probeOptions(),
+        model: opts.model,
+        ...(opts.effort ? { effort: opts.effort } : {}),
+        ...(opts.system ? { systemPrompt: opts.system } : {}),
+        maxTurns: 1,
+      },
+    });
+    let text = "";
+    let usage = emptyUsage();
+    let model = opts.model;
+    for await (const m of q as AsyncIterable<SDKMessage>) {
+      if (m.type === "assistant") model = m.message.model ?? model;
+      if (m.type === "result") {
+        const u = m.usage ?? ({} as Record<string, number>);
+        usage = {
+          inputTokens: u.input_tokens ?? 0,
+          outputTokens: u.output_tokens ?? 0,
+          cacheReadTokens: u.cache_read_input_tokens ?? 0,
+          cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+          costUsd: m.total_cost_usd ?? 0,
+          durationMs: m.duration_ms ?? 0,
+          turns: m.num_turns ?? 0,
+        };
+        if (m.subtype !== "success" || m.is_error) throw new Error(m.subtype === "success" ? m.result : m.subtype);
+        text = m.result;
+      }
+    }
+    return { text: text.trim(), usage, model };
+  }
+
   runtime() {
     return { executable: this.exe, version: this.version };
   }

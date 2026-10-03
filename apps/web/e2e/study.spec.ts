@@ -37,16 +37,22 @@ test.describe.serial("Marginalia v2", () => {
     bookId = bookIdFromUrl(page);
 
     await page.getByRole("button", { name: "New session" }).click();
-    await page.getByLabel("Name").fill("Continuity");
-    await page.getByLabel(/^Goal/).fill("understand ε–δ");
-    await page.getByRole("radio", { name: "Problem solving" }).click();
-    await page.getByRole("radio", { name: "25 min" }).click();
-    await page.getByRole("button", { name: "Start" }).click();
+    const form = page.getByRole("dialog", { name: "New session" });
+    // The chapter you're in is the default scope; everything else has a default too.
+    await expect(form.getByLabel("Study")).toHaveValue(/^ch:/);
+    await form.getByRole("radio", { name: "Problem solving" }).click();
+    await form.getByLabel("Start with a plan from Claude").uncheck();
+    await form.getByRole("button", { name: "More options" }).click();
+    await form.getByLabel("Name").fill("Continuity");
+    await form.getByLabel("Goal").fill("understand ε–δ");
+    await form.getByRole("radio", { name: "25 min" }).click();
+    await form.getByRole("button", { name: "Start" }).click();
 
     await expect(page).toHaveURL(/#\/read\/\d+\?session=\d+/);
     await expect(page.locator(".page canvas").first()).toBeVisible();
     await expect(page.locator(".session-pill")).toContainText("Continuity");
     await expect(page.locator(".claude-head")).toContainText("Problem solving");
+    await expect(page.locator(".claude-head")).toContainText("Chapter 7 Continuity");
 
     // Ask; the reply streams with what Claude looked at, and page references are links.
     const composer = page.getByLabel("Message Claude");
@@ -159,14 +165,78 @@ test.describe.serial("Marginalia v2", () => {
     await page.getByRole("button", { name: "Continue" }).first().click();
     await expect(page.locator(".pdfViewer .page canvas").first()).toBeVisible();
     await page.evaluate((id) => (location.hash = `#/read/${id}`), bookId);
-    await expect(page.getByRole("button", { name: "Start session" })).toBeVisible();
+    await expect(page.locator(".claude-empty").getByRole("button", { name: "Start" })).toBeVisible();
     await expect(page.getByText("Something went wrong")).toHaveCount(0);
 
-    await page.getByLabel("Session name").fill("Quick look");
-    await page.getByRole("button", { name: "Start session" }).click();
+    const quick = page.locator(".claude-empty");
+    await quick.getByRole("button", { name: "More options" }).click();
+    await quick.getByLabel("Name").fill("Quick look");
+    await quick.getByLabel("Start with a plan from Claude").uncheck();
+    await quick.getByRole("button", { name: "Start" }).click();
     await expect(page.locator(".session-pill")).toContainText("Quick look");
     await expect(page.locator(".pdfViewer .page canvas").first()).toBeVisible();
     await expect(page.getByText("Something went wrong")).toHaveCount(0);
+  });
+
+  test("study methods: explain it back, flashcards with review, capture, answer modes", async ({ page }) => {
+    await page.goto(`/#/book/${bookId}`);
+    await page.locator("article.session").filter({ has: page.locator(".session-name", { hasText: /^Continuity$/ }) }).getByRole("button", { name: "Continue" }).click();
+    await expect(page.locator(".pdfViewer .page canvas").first()).toBeVisible();
+    const composer = page.getByLabel("Message Claude");
+
+    // Explain it back (Feynman): the message is marked as a teach-back.
+    await page.getByRole("button", { name: "Study methods" }).click();
+    await page.getByRole("menuitem", { name: "Explain it back (Feynman)" }).click();
+    await expect(page.locator(".teach-chip")).toBeVisible();
+    await composer.fill("Continuity means small changes in x give small changes in f(x).");
+    await composer.press("Enter");
+    await expect(page.locator(".msg.user").last().locator(".msg-tag")).toHaveText("Explain it back");
+
+    // Claude makes flashcards (a book tool); they can be reviewed right away.
+    await composer.fill('[[tool:make_flashcards {"cards":[{"front":"Define continuity at a","back":"lim f(x) = f(a)","page":"141"}]}]]');
+    await composer.press("Enter");
+    await page.getByRole("button", { name: "Review" }).click();
+    const review = page.getByRole("dialog", { name: /Review/ });
+    await expect(review).toContainText("Define continuity at a");
+    await review.getByRole("button", { name: /Show answer/ }).click();
+    await review.getByRole("button", { name: /Good/ }).click();
+    await expect(review).toContainText("Done — 1 card reviewed");
+    await review.getByRole("button", { name: "Close", exact: true }).last().click();
+
+    // Quick answers make no lookups.
+    await page.getByRole("radio", { name: "Quick" }).click();
+    await composer.fill("what is this?");
+    await composer.press("Enter");
+    await expect(page.locator(".msg.assistant").last()).toContainText("here's the idea");
+    await page.getByRole("radio", { name: "Normal" }).click();
+
+    // Capture a region of the page and ask about it.
+    await page.getByRole("button", { name: "Capture a region for Claude" }).click();
+    const box = (await page.locator(".pdfViewer .page").first().boundingBox())!;
+    await page.mouse.move(box.x + 40, box.y + 60);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 260, box.y + 160, { steps: 4 });
+    await page.mouse.up();
+    await expect(page.locator(".capture-chip img")).toBeVisible();
+    await composer.fill("What does this say?");
+    await composer.press("Enter");
+    await expect(page.locator(".capture-chip")).toHaveCount(0);
+    await expect(page.locator(".msg.user").last()).toContainText("captured region");
+  });
+
+  test("a reading-only session has no Claude panel", async ({ page }) => {
+    await page.goto(`/#/book/${bookId}`);
+    await page.getByRole("button", { name: "New session" }).click();
+    const form = page.getByRole("dialog", { name: "New session" });
+    await form.getByRole("radio", { name: "No AI" }).click();
+    await form.getByRole("button", { name: "Start" }).click();
+    await expect(page.locator(".pdfViewer .page canvas").first()).toBeVisible();
+    await expect(page.locator(".session-pill")).toBeVisible();
+    await expect(page.locator("aside.claude")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Toggle Claude" })).toHaveCount(0);
+    await page.locator(".session-pill").click();
+    await page.getByRole("dialog", { name: "Session" }).getByRole("button", { name: "End session" }).click();
+    await page.getByRole("dialog", { name: "Session ended" }).getByRole("button", { name: "Back to sessions" }).click();
   });
 
   test("ending a session writes a summary that shows on the book page", async ({ page }) => {
@@ -174,13 +244,13 @@ test.describe.serial("Marginalia v2", () => {
     // A session without any chat ends without a summary, and says so.
     await page.locator("article.session", { hasText: "Quick look" }).getByRole("button", { name: "End" }).click();
     await expect(page.locator("article.session", { hasText: "Quick look" })).toContainText("Reopen");
-    await page.locator("article.session", { hasText: "Continuity" }).getByRole("button", { name: "Continue" }).click();
+    await page.locator("article.session").filter({ has: page.locator(".session-name", { hasText: /^Continuity$/ }) }).getByRole("button", { name: "Continue" }).click();
     await page.locator(".session-pill").click();
     await page.getByRole("dialog", { name: "Session" }).getByRole("button", { name: "End session" }).click();
     const dialog = page.getByRole("dialog", { name: "Session ended" });
     await expect(dialog).toContainText("Worked through the section on continuity");
     await dialog.getByRole("button", { name: "Back to sessions" }).click();
-    const s = page.locator("article.session", { hasText: "Continuity" });
+    const s = page.locator("article.session").filter({ has: page.locator(".session-name", { hasText: /^Continuity$/ }) });
     await expect(s).toContainText("Reopen");
     await s.getByRole("button", { name: "Show summary" }).click();
     await expect(s).toContainText("Next time");

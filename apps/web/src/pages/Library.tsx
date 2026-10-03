@@ -28,9 +28,11 @@ export function Library() {
     fileRef.current?.click();
   };
 
+  const [due, setDue] = useState<Record<number, number>>({});
   const load = useCallback(async () => {
     try {
       setBooks(await api.books());
+      void api.cardsDue().then((d) => setDue(Object.fromEntries(d.map((x) => [x.bookId, Number(x.n)]))), () => {});
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -205,7 +207,7 @@ export function Library() {
                 {list.length === 0 ? null : (
                   <div className="grid">
                     {list.map((b) => (
-                      <BookCard key={b.id} b={b} onMove={() => setMoveBook(b)} onDelete={() => setDeleteBook(b)} onRenamed={load} />
+                      <BookCard key={b.id} b={b} due={due[b.id] ?? 0} onMove={() => setMoveBook(b)} onDelete={() => setDeleteBook(b)} onRenamed={load} />
                     ))}
                   </div>
                 )}
@@ -286,7 +288,7 @@ export function Library() {
   );
 }
 
-function BookCard({ b, onMove, onDelete, onRenamed }: { b: LibraryBook; onMove: () => void; onDelete: () => void; onRenamed: () => void }) {
+function BookCard({ b, due, onMove, onDelete, onRenamed }: { b: LibraryBook; due: number; onMove: () => void; onDelete: () => void; onRenamed: () => void }) {
   const progress = b.pageCount ? Math.min(100, Math.round(((b.lastPage + 1) / b.pageCount) * 100)) : 0;
   const status =
     b.indexState === "failed"
@@ -338,6 +340,11 @@ function BookCard({ b, onMove, onDelete, onRenamed }: { b: LibraryBook; onMove: 
           <button className="link small" onClick={() => go({ name: "book", bookId: b.id })}>
             {b.sessionCount} session{b.sessionCount === 1 ? "" : "s"}
             {b.openSessions ? ` · ${b.openSessions} open` : ""}
+          </button>
+        )}
+        {due > 0 && (
+          <button className="link small due-link" onClick={() => go({ name: "book", bookId: b.id })} title="Review on the book's page">
+            {due} card{due === 1 ? "" : "s"} to review
           </button>
         )}
         {status && <div className={`book-status small ${status.cls}`}>{status.text}</div>}

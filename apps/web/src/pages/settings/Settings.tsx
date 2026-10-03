@@ -66,7 +66,7 @@ function Study() {
   return (
     <>
       <h1 className="h1">Study time</h1>
-      <p className="muted small">Time with a book open and in use. Idle time (5 minutes without activity) and hidden tabs don't count.</p>
+      <p className="muted small">Time with a book open and in use; idle time doesn't count.</p>
       <div className="stats">
         <Stat label="Today" value={formatDuration(t.todayMs) || "—"} />
         <Stat label="This week" value={formatDuration(t.weekMs) || "—"} />
@@ -428,7 +428,7 @@ function MemoryPanel() {
         </button>
       </div>
       <p className="muted small">
-        Things Claude knows about you across every session — how you like explanations, what you've mastered, what trips you up. Claude can only suggest memories; nothing is saved until you approve it.
+        What Claude remembers about you in every session. Claude only suggests; you decide what's kept.
       </p>
       {pending.length > 0 && (
         <section style={{ marginTop: 18 }}>
@@ -612,7 +612,7 @@ function Subjects() {
           <Plus size={14} /> Add subject
         </button>
       </div>
-      <p className="muted small">Each subject has a tutor style — how Claude should teach it. Claude reads it at the start of every session for books in that subject.</p>
+      <p className="muted small">A subject's tutor style tells Claude how to teach books in it.</p>
       {s ? (
         <div className="subjects">
           <div className="subject-list">
@@ -634,7 +634,7 @@ function Subjects() {
                 Tutor style
               </label>
               <textarea id="sub-style" className="textarea mono style-text" rows={16} value={style} onChange={(e) => setStyle(e.target.value)} />
-              <div className="hint">Plain language or Markdown. For example: “Give hints before answers. Ask me to state theorems in my own words.”</div>
+              <div className="hint">Plain words or Markdown, e.g. “hints before answers”.</div>
             </div>
             <div className="row">
               <button className="btn ghost danger" onClick={() => setConfirmDel(true)}>
@@ -730,7 +730,7 @@ function Appearance() {
       <section className="set-row">
         <div>
           <div className="set-label">Text size</div>
-          <div className="small muted">For Claude's answers and notes.</div>
+          <div className="small muted">Claude's answers and notes.</div>
         </div>
         <div className="row">
           <input type="range" min={13} max={22} value={a.fontSize} onChange={(e) => void save({ appearance: { fontSize: Number(e.target.value) } })} aria-label="Text size" />
@@ -739,13 +739,11 @@ function Appearance() {
           </span>
         </div>
       </section>
-      <div className="md sample" style={{ marginBottom: 20 }}>
-        A continuous function on a closed interval attains a maximum; the proof leans on the least upper bound property.
-      </div>
+      
       <section className="set-row">
         <div>
           <div className="set-label">Dim book pages</div>
-          <div className="small muted">Lowers page brightness for night reading without inverting colours, so figures and highlights stay accurate.</div>
+          <div className="small muted">For night reading; colours aren't inverted.</div>
         </div>
         <div className="row">
           <input type="range" min={0} max={40} value={a.pdfDim} onChange={(e) => void save({ appearance: { pdfDim: Number(e.target.value) } })} aria-label="Dim book pages" />
@@ -776,13 +774,12 @@ function ClaudeSettings() {
     <>
       <h1 className="h1">Claude</h1>
       <p className="muted small">
-        Each session is a Claude Code conversation that runs in Marginalia's study folder. Claude can read your books, notes and highlights there and search the web. It can't run commands, and it can only write
-        session notes and memory suggestions.
+        Sessions run in Claude Code inside Marginalia's study folder: Claude can read your books, notes and highlights and search the web, but can't run commands.
       </p>
       <section className="set-row">
         <div>
           <div className="set-label">Default model</div>
-          <div className="small muted">What new chats start with. You can switch model for any message from the picker under the message box.</div>
+          <div className="small muted">You can switch for any message in the chat.</div>
         </div>
         <select className="select" style={{ width: 260 }} value={settings.model} onChange={(e) => void save({ model: e.target.value }).catch(toastError)} aria-label="Model">
           <optgroup label="Latest (follows Claude Code updates)">
@@ -810,7 +807,7 @@ function ClaudeSettings() {
       <section className="set-row">
         <div>
           <div className="set-label">Default effort</div>
-          <div className="small muted">How long Claude thinks before answering. Higher is more thorough and uses more of your plan.</div>
+          <div className="small muted">Higher thinks longer and uses more of your plan.</div>
         </div>
         <div className="seg sm" role="radiogroup" aria-label="Default effort">
           {EFFORTS.map((e) => (
@@ -823,14 +820,14 @@ function ClaudeSettings() {
       <section className="set-row">
         <div>
           <div className="set-label">Web search</div>
-          <div className="small muted">Let Claude look things up online when the book isn't enough. Web pages are treated as information, never as instructions.</div>
+          <div className="small muted">When the book isn't enough.</div>
         </div>
         <Switch on={settings.webSearch} onChange={(v) => void save({ webSearch: v }).catch(toastError)} label="Web search" />
       </section>
       <section className="set-row">
         <div>
           <div className="set-label">Lookups per message</div>
-          <div className="small muted">The most pages, searches and web fetches Claude may use to answer one message.</div>
+          <div className="small muted">For Normal answers; Deep allows more, Quick none.</div>
         </div>
         <div className="row">
           <input type="range" min={3} max={40} value={settings.maxTurns} onChange={(e) => void save({ maxTurns: Number(e.target.value) })} aria-label="Lookups per message" />

@@ -4,10 +4,11 @@ import type { Db } from "@marginalia/db";
 import type { ChatEngine } from "../ai/engine";
 import type { Indexer } from "../ingest/indexer";
 import type { BookSearch } from "../services/search";
+import type { BookPrep } from "../services/prepare";
 import type { ChatService } from "../services/chat";
 import type { Workspace } from "../workspace";
 
-export type Deps = { db: Db; ws: Workspace; indexer: Indexer; chat: ChatService; engine: ChatEngine; search: BookSearch; dataDir: string };
+export type Deps = { db: Db; ws: Workspace; indexer: Indexer; chat: ChatService; engine: ChatEngine; search: BookSearch; prep: BookPrep; dataDir: string };
 
 export class HttpError extends Error {
   constructor(

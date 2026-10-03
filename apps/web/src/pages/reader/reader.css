@@ -1155,3 +1155,55 @@
   font-weight: 600;
   margin: 2px 0 4px;
 }
+.capture-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  cursor: crosshair;
+  background: rgba(0, 0, 0, 0.06);
+  touch-action: none;
+}
+.capture-hint {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  font-size: 12.5px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.capture-box {
+  position: absolute;
+  border: 2px solid var(--ink);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+.capture-chips {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.capture-chip {
+  position: relative;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+.capture-chip img {
+  display: block;
+  height: 56px;
+  max-width: 140px;
+  object-fit: contain;
+}
+.capture-chip .icon-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  background: var(--surface);
+}

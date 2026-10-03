@@ -247,3 +247,24 @@ describe("flashcards and progress", () => {
     expect(ch.pagesRead).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("prepare with Claude", () => {
+  it("estimates, then writes a summary per chapter and a book brief in the background", async () => {
+    const before = (await t.req("GET", `/books/${bookId}/prepare`)).json;
+    expect(before.plan.chapters).toBe(2);
+    expect(before.plan.tokens).toBeGreaterThan(0);
+    await t.req("POST", `/books/${bookId}/prepare`, {});
+    for (let i = 0; i < 50 && (await t.req("GET", `/books/${bookId}/prepare`)).json.running; i++) await new Promise((r) => setTimeout(r, 20));
+    const after = (await t.req("GET", `/books/${bookId}/prepare`)).json;
+    expect(after.error).toBeNull();
+    expect(after.plan.todo).toBe(0);
+    expect(after.brief).toBeTruthy();
+    const sums = t.db.select().from(summaries).where(eq(summaries.bookId, bookId)).all();
+    expect(sums.map((s) => s.title)).toEqual(expect.arrayContaining(["Chapter 8 Least Upper Bounds"]));
+    // The chapter text went to the model with printed page markers; the book brief shows up in the tutor's brief.
+    expect(t.mock.completions.some((p) => p.includes("[p. 147]"))).toBe(true);
+    const s = await start();
+    await t.sse(`/sessions/${s.id}/chat`, { text: "hi", view: view(0) });
+    expect(t.mock.sent.at(-1)!.brief.systemPrompt).toContain("## About this book");
+  });
+});

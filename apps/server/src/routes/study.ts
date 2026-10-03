@@ -17,7 +17,7 @@ const CardPatch = z.object({ front: z.string().trim().min(1).max(1000), back: z.
 const ReviewBody = z.object({ grade: z.enum(["again", "hard", "good", "easy"]) });
 
 /** Study tools around a book: search, its index, summaries, progress through it, and flashcards. */
-export function studyRoutes({ db, search }: Deps) {
+export function studyRoutes({ db, search, prep }: Deps) {
   const app = new Hono();
   const book = (bookId: number) => must(db.select().from(books).where(and(eq(books.id, bookId), isNull(books.deletedAt))).get(), "Book not found");
 
@@ -75,6 +75,21 @@ export function studyRoutes({ db, search }: Deps) {
       };
     });
     return c.json({ chapters, cardsDue: due.length, embed: { state: b.embedState, progress: b.embedProgress } });
+  });
+
+  // ---------- Prepare with Claude: chapter summaries and a book brief ----------
+  app.get("/books/:id/prepare", (c) => {
+    const b = book(id(c));
+    return c.json({ ...prep.status(b.id), plan: prep.plan(b.id), brief: b.brief });
+  });
+  app.post("/books/:id/prepare", async (c) => {
+    const b = book(id(c));
+    const { model } = await body(c, z.object({ model: z.string().max(80).optional() }));
+    return c.json(prep.start(b.id, model));
+  });
+  app.post("/books/:id/prepare/cancel", (c) => {
+    prep.cancel(id(c));
+    return c.json({ ok: true });
   });
 
   // ---------- Flashcards ----------

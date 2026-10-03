@@ -28,6 +28,7 @@ export function Viewer({ startPage, onScale }: { startPage: number; onScale: (va
   const view = useReader((s) => s.view);
   const back = useReader((s) => s.back);
   const findOpen = useReader((s) => s.findOpen);
+  const capturing = useReader((s) => s.capturing);
   const [toolbar, setToolbar] = useState<Captured | null>(null);
   const [find, setFind] = useState<FindStatus>({ state: null, current: 0, total: 0 });
 
@@ -250,6 +251,7 @@ export function Viewer({ startPage, onScale }: { startPage: number; onScale: (va
         <div ref={inner} className="pdfViewer" />
       </div>
       {!pdf && <div className="viewer-loading muted">Opening…</div>}
+      {capturing && view && <CaptureOverlay view={view} />}
       {findOpen && view && <FindBar view={view} status={find} />}
       {back != null && book && view && (
         <button
@@ -504,6 +506,86 @@ function FindBar({ view, status }: { view: PdfView; status: FindStatus }) {
       <button className="icon-btn" aria-label="Close find" onClick={close}>
         <X size={16} />
       </button>
+    </div>
+  );
+}
+
+/** Drag a box over the page; the region is rendered sharply and attached to the next message to Claude. */
+function CaptureOverlay({ view }: { view: PdfView }) {
+  const [box, setBoxState] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // The drag lives in a ref too, so fast pointer events never see a stale box.
+  const live = useRef<typeof box>(null);
+  const setBox = (b: typeof box) => {
+    live.current = b;
+    setBoxState(b);
+  };
+  const ref = useRef<HTMLDivElement>(null);
+  const cancel = () => useReader.setState({ capturing: false });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && cancel();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const finish = async (b: { x0: number; y0: number; x1: number; y1: number }) => {
+    const r = { left: Math.min(b.x0, b.x1), top: Math.min(b.y0, b.y1), right: Math.max(b.x0, b.x1), bottom: Math.max(b.y0, b.y1) };
+    if (r.right - r.left < 8 || r.bottom - r.top < 8) return setBox(null);
+    // The page under the box's centre; the box is clipped to it.
+    const cx = (r.left + r.right) / 2;
+    const cy = (r.top + r.bottom) / 2;
+    const page = view.visiblePages().find((i) => {
+      const pb = view.pageBox(i);
+      return pb && cx >= pb.left && cx <= pb.right && cy >= pb.top && cy <= pb.bottom;
+    });
+    const pb = page != null ? view.pageBox(page) : null;
+    if (page == null || !pb) {
+      toast({ text: "Draw the box over a page.", kind: "error" });
+      return setBox(null);
+    }
+    const left = Math.max(r.left, pb.left) - pb.left;
+    const top = Math.max(r.top, pb.top) - pb.top;
+    const width = Math.min(r.right, pb.right) - pb.left - left;
+    const height = Math.min(r.bottom, pb.bottom) - pb.top - top;
+    const dataUrl = await view.renderRegion(page, { left, top, width, height }).catch(() => null);
+    setBox(null);
+    if (!dataUrl) return toast({ text: "Couldn't capture that region.", kind: "error" });
+    const st = useReader.getState();
+    useReader.setState({ capturing: false, captures: [...st.captures, { pageIndex: page, dataUrl }].slice(-3) });
+    st.setLayout({ claude: true });
+    setTimeout(() => window.dispatchEvent(new Event("marginalia:focus-claude")), 0);
+  };
+
+  const at = (e: React.PointerEvent) => ({ x: e.clientX, y: e.clientY });
+  const shell = ref.current?.getBoundingClientRect();
+  return (
+    <div
+      ref={ref}
+      className="capture-overlay"
+      onPointerDown={(e) => {
+        try {
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        } catch {
+          /* not an active pointer (synthetic events) */
+        }
+        const p = at(e);
+        setBox({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+      }}
+      onPointerMove={(e) => live.current && setBox({ ...live.current, x1: e.clientX, y1: e.clientY })}
+      onPointerUp={(e) => live.current && void finish({ ...live.current, x1: e.clientX, y1: e.clientY })}
+      onWheel={(e) => view.container.scrollBy({ top: e.deltaY, left: e.deltaX })}
+    >
+      <div className="capture-hint pop">Drag over a figure, formula or passage to ask Claude about it · Esc to cancel</div>
+      {box && shell && (
+        <div
+          className="capture-box"
+          style={{
+            left: Math.min(box.x0, box.x1) - shell.left,
+            top: Math.min(box.y0, box.y1) - shell.top,
+            width: Math.abs(box.x1 - box.x0),
+            height: Math.abs(box.y1 - box.y0),
+          }}
+        />
+      )}
     </div>
   );
 }

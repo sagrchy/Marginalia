@@ -134,6 +134,7 @@ export function BookPage({ bookId }: { bookId: number }) {
               </span>
               {totalMs > 0 && <span>· {formatDuration(totalMs)} studied</span>}
             </div>
+            {book.brief && <BookBrief text={book.brief} />}
             <TextStatus book={book} onChange={load} />
           </div>
         </section>
@@ -188,7 +189,13 @@ export function BookPage({ bookId }: { bookId: number }) {
 
           {progress && progress.chapters.length > 0 && (
             <section>
-              <h2 className="section-title">Chapters</h2>
+              <div className="row" style={{ marginBottom: 10 }}>
+                <h2 className="section-title" style={{ margin: 0 }}>
+                  Chapters
+                </h2>
+                <span className="spacer" />
+                <PrepareWithClaude bookId={book.id} onDone={load} />
+              </div>
               <div className="chapter-map" role="list">
                 {progress.chapters.map((c) => {
                   const done = c.pagesRead / c.pages;
@@ -208,7 +215,7 @@ export function BookPage({ bookId }: { bookId: number }) {
                         <i style={{ width: `${Math.round(done * 100)}%` }} />
                       </span>
                       <span className="chapter-flags small muted">
-                        {c.cardsDue > 0 && <span title={`${c.cardsDue} flashcards due`}>{c.cardsDue} due</span>}
+                        {c.cardsDue > 0 ? <span title={`${c.cardsDue} flashcards due`}>{c.cardsDue} due</span> : c.summarized ? <span className="sum-dot" title="Claude has a summary of this chapter" /> : null}
                       </span>
                     </button>
                   );
@@ -262,6 +269,86 @@ export function BookPage({ bookId }: { bookId: number }) {
         </Dialog>
       )}
     </div>
+  );
+}
+
+function BookBrief({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="book-brief">
+      <div className={open ? "" : "clamp"}>
+        <Markdown>{text}</Markdown>
+      </div>
+      <button className="link small" onClick={() => setOpen(!open)}>
+        {open ? "Less" : "About this book"}
+      </button>
+    </div>
+  );
+}
+
+/** Summaries of every chapter and an "about this book", written once by Claude (light model) in the background. */
+function PrepareWithClaude({ bookId, onDone }: { bookId: number; onDone: () => void }) {
+  const [st, setSt] = useState<Awaited<ReturnType<typeof api.prepStatus>> | null>(null);
+  const [asking, setAsking] = useState(false);
+  const refresh = useCallback(() => api.prepStatus(bookId).then(setSt, () => {}), [bookId]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  useEffect(() => {
+    if (!st?.running) return;
+    const t = setInterval(async () => {
+      const s = await api.prepStatus(bookId).catch(() => null);
+      if (!s) return;
+      setSt(s);
+      if (!s.running) onDone();
+    }, 2000);
+    return () => clearInterval(t);
+  }, [st?.running, bookId, onDone]);
+  if (!st?.plan || st.plan.chapters === 0) return null;
+  const { plan } = st;
+  if (st.running)
+    return (
+      <span className="small muted prep-status">
+        Summarising {st.current ? `“${niceTitle(st.current).slice(0, 28)}”` : "…"} · {st.done}/{st.total}{" "}
+        <button className="link small" style={{ marginTop: 0 }} onClick={() => api.prepCancel(bookId).then(refresh)}>
+          Stop
+        </button>
+      </span>
+    );
+  if (plan.todo === 0 && !plan.brief) return <span className="small muted" title="Claude has a summary of every chapter">Summarised</span>;
+  return (
+    <>
+      <button className="link small" style={{ marginTop: 0 }} onClick={() => setAsking(true)} title="Claude summarises every chapter once, so overviews and sessions start from real notes">
+        Prepare with Claude
+      </button>
+      {st.error && <span className="small danger"> · stopped: {st.error.slice(0, 60)}</span>}
+      {asking && (
+        <Dialog title="Prepare this book with Claude" onClose={() => setAsking(false)} width={460}>
+          <p>
+            Claude reads {plan.todo === plan.chapters ? "every chapter" : `the ${plan.todo} chapters without one`} and writes a short summary of each{plan.brief ? ", plus a brief about the whole book" : ""}. Overviews and every
+            session then start from these notes instead of rereading.
+          </p>
+          <p className="small muted">
+            Uses Haiku, about {Math.max(1, Math.round(plan.tokens / 1000))}k tokens of your plan, in the background. You can keep reading, and stop it any time; finished chapters are kept.
+          </p>
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <button className="btn" onClick={() => setAsking(false)}>
+              Not now
+            </button>
+            <button
+              className="btn primary"
+              onClick={async () => {
+                setAsking(false);
+                await api.prepStart(bookId).catch(toastError);
+                void refresh();
+              }}
+            >
+              Prepare
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </>
   );
 }
 

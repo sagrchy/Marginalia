@@ -114,9 +114,12 @@ export class PdfView {
         if (!e.ctrlKey && !e.metaKey) return;
         e.preventDefault();
         const steps = Math.max(1, Math.round(Math.abs(e.deltaY) / 50));
-        const opts = { drawingDelay: 200, origin: [e.clientX, e.clientY], steps };
+        // Zoom around the cursor: the point under it stays under it.
+        const a = this.anchor(e.clientX, e.clientY);
+        const opts = { drawingDelay: 200, steps };
         if (e.deltaY < 0) this.viewer.increaseScale(opts);
         else this.viewer.decreaseScale(opts);
+        if (a) this.restore(a, e.clientX, e.clientY);
       },
       { passive: false },
     );
@@ -165,13 +168,40 @@ export class PdfView {
     return LAYOUTS.find((l) => l.scroll === scroll && l.spread === spread)?.id ?? "continuous";
   }
 
+  /** Zoom to a preset or a number, keeping the spot at the centre of the view where it is. */
   setScale(value: string) {
+    const a = this.anchor();
     this.viewer.currentScaleValue = value;
+    if (a) this.restore(a);
   }
+  /** One zoom step, keeping the spot at the centre of the view where it is (like a browser's PDF viewer). */
   zoom(dir: 1 | -1) {
     this.onNavigate?.();
+    const a = this.anchor();
     if (dir > 0) this.viewer.increaseScale();
     else this.viewer.decreaseScale();
+    // Layout is recomputed on read, so the anchor can be restored straight away.
+    if (a) this.restore(a);
+  }
+
+  /** The point at the centre of the view: which page, and where on it (as fractions). */
+  private anchor(x?: number, y?: number): { page: number; fx: number; fy: number } | null {
+    const c = this.container.getBoundingClientRect();
+    const cx = x ?? c.left + c.width / 2;
+    const cy = y ?? c.top + c.height / 2;
+    for (const i of this.visiblePages()) {
+      const r = this.pageView(i)?.div.getBoundingClientRect();
+      if (r && cy >= r.top && cy <= r.bottom) return { page: i, fx: (cx - r.left) / r.width, fy: (cy - r.top) / r.height };
+    }
+    return null;
+  }
+
+  private restore(a: { page: number; fx: number; fy: number }, x?: number, y?: number) {
+    const r = this.pageView(a.page)?.div.getBoundingClientRect();
+    if (!r) return;
+    const c = this.container.getBoundingClientRect();
+    this.container.scrollLeft += r.left + a.fx * r.width - (x ?? c.left + c.width / 2);
+    this.container.scrollTop += r.top + a.fy * r.height - (y ?? c.top + c.height / 2);
   }
   rotate(delta: number) {
     this.onNavigate?.();
@@ -193,6 +223,29 @@ export class PdfView {
       matchDiacritics: false,
     });
   }
+  /**
+   * A region of a page as a sharp PNG (re-rendered from the PDF, not a screenshot), for Claude to look at.
+   * `box` is in CSS pixels relative to the page's box at the current zoom.
+   */
+  async renderRegion(pageIndex: number, box: { left: number; top: number; width: number; height: number }): Promise<string | null> {
+    const pv = this.pageView(pageIndex) as (PageView & { viewport: { scale: number; rotation: number } }) | null;
+    const doc = (this.viewer as unknown as { pdfDocument: PDFDocumentProxy | null }).pdfDocument;
+    if (!pv || !doc || box.width < 4 || box.height < 4) return null;
+    const page = await doc.getPage(pageIndex + 1);
+    // Enough pixels for small print and formulas, without huge images.
+    const k = Math.max(window.devicePixelRatio || 1, Math.min(4, 1600 / box.width, 1600 / box.height));
+    const vp = page.getViewport({ scale: pv.viewport.scale * k, rotation: pv.viewport.rotation });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(box.width * k);
+    canvas.height = Math.round(box.height * k);
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // "print" renders straight through (display rendering waits on animation frames, which pause in background tabs).
+    await page.render({ canvasContext: ctx, canvas, viewport: vp, intent: "print", transform: [1, 0, 0, 1, -box.left * k, -box.top * k] } as never).promise;
+    return canvas.toDataURL("image/png");
+  }
+
   /** Briefly mark a passage on the current page (e.g. where Claude pointed). */
   flash(quote: string) {
     const q = quote.replace(/\s+/g, " ").trim().slice(0, 80);
